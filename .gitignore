@@ -1,0 +1,14 @@
+/build/
+*.old
+vbmini.code-snippets.json
+windows/*.db
+test.go
+gen_snippets
+test
+testfolder
+*.db
+pic
+*.json
+*.xml
+builds_count.sh
+build_info.html
