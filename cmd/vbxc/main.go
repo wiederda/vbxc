@@ -67,6 +67,8 @@ func usage() {
   vbxc build  windows|linux <datei.vb> [-o <datei.vbb>]
                                       erzeugt eine Maschinencode-Datei (.vbb)
   vbxc -dryrun <datei.vb>             Skript prüfen, ohne es auszuführen
+  vbxc -modules=<modul> -h            Hilfe zu einem Modul anzeigen
+  vbxc -const -h                      Verfügbare Konstanten anzeigen
   vbxc -shell -h                      Shell-Shortcuts anzeigen
   vbxc dis    <datei.vb | datei`+bytecode.Extension+`>
   vbxc ast    <datei.vb>
@@ -120,7 +122,7 @@ func printHelp(filter string, showConstants bool) {
 		fmt.Println("  vbxc -dryrun <quelle.vb>          Skript prüfen, ohne es auszuführen")
 		fmt.Println("  vbxc -shell -h                    Shell-Shortcuts anzeigen")
 		fmt.Println("  vbxc -h                           Diese Übersicht")
-		fmt.Println("  vbxc -modules=file -h             Hilfe zu einem Modul anzeigen")
+		fmt.Println("  vbxc -modules=<modul> -h          Hilfe zu einem Modul anzeigen")
 		fmt.Println("  vbxc -const -h                    Verfügbare Konstanten")
 		fmt.Println("  vbxc -v                           Versionsnummer")
 		fmt.Println("\nInclude-Suche: VBX_INCLUDE_PATH ergänzt lokale Quellordner für Includes.")
@@ -184,24 +186,51 @@ func printConstantsHelp(builtins map[string]stdlib.BuiltinInfo) {
 	const (
 		bold  = "\033[1m"
 		green = "\033[32m"
-		cyan  = "\033[36m"
 		reset = "\033[0m"
 	)
-	names := make([]string, 0)
+	groups := map[string][]string{}
 	for name, info := range builtins {
 		if strings.EqualFold(info.Module, "const") {
-			names = append(names, name)
+			category := info.Category
+			if category == "" {
+				category = "Other"
+			}
+			groups[category] = append(groups[category], name)
 		}
 	}
-	sort.Strings(names)
-	fmt.Printf("\n%sVerfügbare Konstanten%s\n", bold, reset)
-	fmt.Println(strings.Repeat("-", 72))
-	fmt.Printf("%s%-30s%s | %sBeschreibung%s\n", cyan, "Konstante", reset, cyan, reset)
-	fmt.Println(strings.Repeat("-", 72))
-	for _, name := range names {
-		fmt.Printf("%s%-30s%s | %s\n", green, name+"()", reset, builtins[name].Beschreibung)
+	categoryLabels := map[string]string{
+		"Color":      "Textfarben",
+		"Background": "Hintergrundfarben",
+		"Style":      "Textstil und Zurücksetzen",
+		"Logic":      "Logik und Leerwerte",
+		"System":     "Zeichen und Zeilenumbrüche",
+		"Other":      "Weitere Konstanten",
 	}
-	fmt.Println(strings.Repeat("-", 72))
+	categoryOrder := []string{"Color", "Background", "Style", "Logic", "System", "Other"}
+	var additionalCategories []string
+	for category := range groups {
+		if _, known := categoryLabels[category]; !known {
+			additionalCategories = append(additionalCategories, category)
+		}
+	}
+	sort.Strings(additionalCategories)
+	categoryOrder = append(categoryOrder, additionalCategories...)
+	fmt.Printf("\n%sVerfügbare Konstanten%s\n", bold, reset)
+	for _, category := range categoryOrder {
+		names := groups[category]
+		if len(names) == 0 {
+			continue
+		}
+		sort.Strings(names)
+		label := categoryLabels[category]
+		if label == "" {
+			label = category
+		}
+		fmt.Printf("\n%s%s%s\n", bold, label, reset)
+		for _, name := range names {
+			fmt.Printf("  %s%-24s%s %s\n", green, name+"()", reset, builtins[name].Beschreibung)
+		}
+	}
 }
 
 func readSource(path string) string {
@@ -372,10 +401,18 @@ func main() {
 	}
 	if cmd == "-shell" {
 		filter := ""
+		showHelp := false
 		for _, arg := range os.Args[2:] {
-			if arg != "-h" && arg != "--help" {
+			switch arg {
+			case "-h", "--help":
+				showHelp = true
+			default:
 				filter = strings.TrimPrefix(arg, "-")
 			}
+		}
+		if !showHelp {
+			fmt.Fprintln(os.Stderr, "Für die Shell-Shortcut-Hilfe: vbxc -shell -h")
+			os.Exit(2)
 		}
 		printShellHelp(filter)
 		return
@@ -396,13 +433,17 @@ func main() {
 		if err := plugin.LoadModules(requestedModules); err != nil {
 			die(fmt.Errorf("Modul(e) %q konnten nicht geladen werden: %w", strings.Join(requestedModules, ","), err))
 		}
-		if showHelp || len(positional) == 0 {
+		if showHelp {
 			filter := ""
 			if len(requestedModules) == 1 {
 				filter = strings.TrimSpace(requestedModules[0])
 			}
 			printHelp(filter, false)
 			return
+		}
+		if len(positional) == 0 {
+			fmt.Fprintln(os.Stderr, "Für die Modulhilfe: vbxc -modules=<modul> -h")
+			os.Exit(2)
 		}
 		if used, err := executeShortcut(strings.TrimSuffix(positional[0], "()"), positional[1:]); used {
 			if err != nil {
@@ -419,6 +460,7 @@ func main() {
 	if cmd == "help" || cmd == "-h" || cmd == "--help" || cmd == "/?" || cmd == "-const" || (strings.HasPrefix(cmd, "-") && cmd != "-" && cmd != "-v" && cmd != "--version") {
 		filter := ""
 		showConstants := cmd == "-const"
+		showHelp := cmd == "-h" || cmd == "--help" || cmd == "/?"
 		if strings.HasPrefix(cmd, "-") && cmd != "-h" && cmd != "--help" && cmd != "/?" && cmd != "-const" {
 			filter = strings.TrimPrefix(cmd, "-")
 		}
@@ -426,12 +468,18 @@ func main() {
 			switch {
 			case arg == "-const":
 				showConstants = true
-			case arg == "-h" || arg == "--help" || arg == "/?" || arg == "help":
+			case arg == "-h" || arg == "--help" || arg == "/?":
+				showHelp = true
+			case arg == "help":
 			case strings.HasPrefix(arg, "-"):
 				filter = strings.TrimPrefix(arg, "-")
 			default:
 				filter = arg
 			}
+		}
+		if showConstants && !showHelp {
+			fmt.Fprintln(os.Stderr, "Für die Konstantenhilfe: vbxc -const -h")
+			os.Exit(2)
 		}
 		printHelp(filter, showConstants)
 		return

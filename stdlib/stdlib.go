@@ -16,6 +16,7 @@ type BuiltinInfo struct {
 	Module       string
 	ParamCount   int
 	Deprecated   string
+	Category     string
 }
 
 var builtins = make(map[string]BuiltinInfo)
@@ -53,6 +54,14 @@ func Register(name, namespace, params, description string, fn func([]value.Value
 	}
 	builtins[key] = BuiltinInfo{Fn: fn, Beschreibung: description, Params: params, Module: namespace, ParamCount: paramCount}
 	registryGen++ // Snapshots (Evaluator) müssen neu aufgebaut werden
+}
+
+// RegisterConstant legt eine Konstante mit ihrer Hilfe-Kategorie an.
+func RegisterConstant(category, name, description string, fn func([]value.Value) value.Value) {
+	Register(name, "const", "", description, fn)
+	info := builtins[name]
+	info.Category = category
+	builtins[name] = info
 }
 
 func Lookup(name string) (BuiltinInfo, bool) {

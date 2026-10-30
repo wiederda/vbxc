@@ -4,8 +4,7 @@ import "vbxc/value"
 
 func init() {
 	register := func(category, name, desc string, val value.Value) {
-		_ = category // category is represented by the const module in vbxc metadata.
-		Register(name, "const", "", desc, func([]value.Value) value.Value {
+		RegisterConstant(category, name, desc, func([]value.Value) value.Value {
 			return val
 		})
 	}
