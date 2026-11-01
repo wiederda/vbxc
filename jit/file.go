@@ -22,25 +22,31 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
 
 	"vbxc/bytecode"
 )
 
-// Magic und Version der Maschinencode-Datei. Version 2 folgt auf die
-// Codegen-Runden 2/3 (natives OpEq/OpNeq, SSE4.1-Rundung): Dateien mit
-// Version 1 enthalten Maschinencode vor diesen Änderungen (möglicherweise
-// aus einer fehlerhaften Generatorfassung) und werden abgelehnt, statt
-// still weiterzulaufen - sie sind mit 'vbxc build windows|linux' neu
-// zu erzeugen.
+// Magic und Version der Maschinencode-Datei. Version 3 speichert die nötigen
+// CPU-Features, damit AVX/FMA- und SSE4.1-Code nicht auf einer inkompatiblen
+// amd64-CPU ausgeführt wird. Ältere Versionen werden abgelehnt und müssen mit
+// 'vbxc build windows|linux' neu erzeugt werden.
 const (
 	machineFileMagic   = "VBXM"
-	machineFileVersion = 2
+	machineFileVersion = 3
+)
+
+const (
+	cpuFeatureSSE41 uint32 = 1 << iota
+	cpuFeatureAVX
+	cpuFeatureFMA
 )
 
 type machineFile struct {
 	Version int    // machineFileVersion
 	GOOS    string // Ziel-Betriebssystem
 	GOARCH  string // Ziel-Architektur (der Codegenerator erzeugt amd64)
+	CPU     uint32 // erforderliche Instruktionsfeatures (cpuFeature*)
 	Chunk   *bytecode.Chunk
 	Code    []byte
 	Entries []SavedEntry
@@ -68,6 +74,7 @@ func WriteMachineFile(w io.Writer, goos, goarch string, c *bytecode.Chunk) (Stat
 		Version: machineFileVersion,
 		GOOS:    goos,
 		GOARCH:  goarch,
+		CPU:     requiredCPUFeatures(c),
 		Chunk:   c,
 		Code:    sp.Code,
 		Entries: sp.Entries,
@@ -84,12 +91,47 @@ func WriteMachineFile(w io.Writer, goos, goarch string, c *bytecode.Chunk) (Stat
 // (die .vbb ist damit pro Ziel-OS/Arch eine eigene Datei).
 func machineHeader(m *machineFile) error {
 	if m.GOOS == runtime.GOOS && m.GOARCH == runtime.GOARCH {
+		const knownCPUFeatures = cpuFeatureSSE41 | cpuFeatureAVX | cpuFeatureFMA
+		if m.CPU&^knownCPUFeatures != 0 {
+			return fmt.Errorf("Maschinencode-Datei verlangt unbekannte CPU-Features: %#x", m.CPU&^knownCPUFeatures)
+		}
+		if !hostSupportsCPUFeatures(m.CPU) {
+			return fmt.Errorf("Maschinencode-Datei benötigt CPU-Features, die auf diesem Rechner fehlen (Anforderung: %#x)", m.CPU)
+		}
 		return nil
 	}
 	return fmt.Errorf(
 		"Datei enthält %s/%s-Maschinencode und läuft nicht auf %s/%s",
 		m.GOOS, m.GOARCH, runtime.GOOS, runtime.GOARCH,
 	)
+}
+
+// requiredCPUFeatures ermittelt die Instruktionssätze, die der Generator für
+// diesen Chunk tatsächlich freischalten konnte. Maschinencode-Dateien sind
+// damit nicht nur an GOOS/GOARCH, sondern auch an ihre CPU-Anforderungen
+// gebunden.
+func requiredCPUFeatures(c *bytecode.Chunk) uint32 {
+	var required uint32
+	for _, code := range codeArrays(c) {
+		for _, in := range code {
+			if in.Op != bytecode.OpCall || in.A < 0 || int(in.A) >= len(c.Names) {
+				continue
+			}
+			name := c.Names[in.A]
+			if nativeMathUnaryCall(name, in.B) {
+				switch strings.ToLower(name) {
+				case "math.floor", "math.ceil", "math.trunc", "math.int":
+					required |= cpuFeatureSSE41
+				case "math.exp":
+					required |= cpuFeatureAVX | cpuFeatureFMA
+				}
+			}
+			if nativeMathRoundCall(name, in.B) && strings.EqualFold(name, "math.roundbank") {
+				required |= cpuFeatureSSE41
+			}
+		}
+	}
+	return required
 }
 
 // LoadRunFile liest eine Maschinencode-Datei. Alte portable VBXB-Dateien

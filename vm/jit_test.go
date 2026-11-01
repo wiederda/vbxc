@@ -423,6 +423,51 @@ For i = 1 To 100000
 Next
 Print s
 `,
+	// Exp-Fastpath: Spiegelung des avxfma-Zweigs in Go's exp_amd64.s.
+	// Traps: Overflow-Grenze (709 -> +Inf, 710 -> Deopt -> VM +Inf),
+	// Underflow bei -745/-750 (0), Denormal-Resultate (-700..-520),
+	// int32-Indefinit bei riesigen negativen Argumenten (CVTSD2SL →
+	// 0x80000000 → JLE → denormal → unterflow), NearZero-Form (1+x-Bit-
+	// Äquivalenz) und breite Zufallsloop. Da die Sprache keine
+	// Exponent-Literale besitzt, entstehen grosse Werte über Arithmetik.
+	"mathe-exp": `
+Print math.Exp(0)
+Print math.Exp(1)
+Print math.Exp(-1)
+Print math.Exp(0.5)
+Print math.Exp(-0.5)
+Print math.Exp(2)
+Print math.Exp(-2)
+Print math.Exp(12)
+Print math.Exp(-12)
+Print math.Exp(100)
+Print math.Exp(-100)
+Print math.Exp(709)
+Print math.Exp(709.9)
+Print math.Exp(710)
+Print math.Exp(1000)
+Print math.Exp(-700)
+Print math.Exp(-745)
+Print math.Exp(-745.5)
+Print math.Exp(-750)
+Dim big = 1000000
+Print math.Exp(-big * big)
+Print math.Exp(big * big)
+Dim tiny = 0.000000000000000000000000000001
+Print math.Exp(tiny)
+Print math.Exp(-tiny)
+Print math.Exp(0.0000000003)
+Print math.Exp(-0.0000000003)
+Print math.Exp("4")
+Print IsError(math.Exp(True))
+Print IsError(math.Exp("x"))
+Dim i
+Dim s = 0.0
+For i = 1 To 100000
+    s = s + math.Exp(-i * 0.0001) + math.Exp(i * 0.00002)
+Next
+Print s
+`,
 	// Clamp-Fastpath: stdlib ist math.Max(lo, math.Min(x, hi)). Traps:
 	// Grenzwerte x < lo / x > hi (beide Teilentscheidungen), Equal-Zeros
 	// (Min waehlt -0, Max +0), Str-Argumente (Deopt-Pfad fingert dieselbe
@@ -1041,3 +1086,47 @@ func benchClamp(b *testing.B, useJIT bool) {
 
 func BenchmarkClampInterpretiert(b *testing.B) { benchClamp(b, false) }
 func BenchmarkClampJIT(b *testing.B)           { benchClamp(b, true) }
+
+// expBenchSkript: ein nativer Exp-Call pro Iteration über den FMA-Pfad von
+// archExp (Reduktion, Taylor-Mirror, vier Verdopplungen, ldexp).
+const expBenchSkript = `
+Dim s = 0.0
+Dim i
+For i = 1 To 1000000
+    s = s + math.Exp(i * 0.001) + math.Exp(-i * 0.0005)
+Next
+Print s
+`
+
+func benchExp(b *testing.B, useJIT bool) {
+	stmts, err := parser.ParseSource(expBenchSkript, parser.Options{File: "bench.vb"})
+	if err != nil {
+		b.Fatalf("Parser: %v", err)
+	}
+	chunk, err := compiler.Compile("bench.vb", stmts)
+	if err != nil {
+		b.Fatalf("Compiler: %v", err)
+	}
+	var prog *jit.Program
+	if useJIT {
+		prog = jit.Prepare(chunk, 0)
+		if prog == nil {
+			b.Skip("JIT nicht verfügbar")
+		}
+		defer prog.Close()
+	}
+	var buf bytes.Buffer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v := New()
+		v.Out = &buf
+		v.SetJIT(prog)
+		if err := v.Run(chunk); err != nil {
+			b.Fatalf("Run: %v", err)
+		}
+		buf.Reset()
+	}
+}
+
+func BenchmarkExpInterpretiert(b *testing.B) { benchExp(b, false) }
+func BenchmarkExpJIT(b *testing.B)           { benchExp(b, true) }

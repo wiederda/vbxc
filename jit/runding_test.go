@@ -134,3 +134,27 @@ func TestClampNative(t *testing.T) {
 		}
 	}
 }
+
+// TestExpNative verifiziert, dass math.Exp (mit FMA-fähiger CPU der FMA-Pfad
+// von archExp) nativ übersetzt wird (nur PRINT/HALT in der VM).
+func TestExpNative(t *testing.T) {
+	for _, c := range []struct{ fn, src string }{
+		{"Exp", `Print math.Exp(1)`},
+		{"Exp/negativ", `Print math.Exp(-2.5)`},
+	} {
+		stmts, err := parser.ParseSource(c.src, parser.Options{File: "ex.vb"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, err := compiler.Compile("ex.vb", stmts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := Prepare(chunk, 0)
+		s := p.Stats
+		fmt.Printf("%-15s Regions=%d Einst=%d Bytes=%d Skipped=%d\n", c.fn, s.Regions, s.Entries, s.CodeBytes, s.Skipped)
+		if s.Skipped > 3 {
+			t.Errorf("%s: zu viele VM-Rückfälle (%d) - Native-Pfad greift nicht", c.fn, s.Skipped)
+		}
+	}
+}

@@ -277,7 +277,7 @@ func supported(chunk *bytecode.Chunk, in bytecode.Instr) bool {
 	case bytecode.OpCall:
 		// Fast paths for numeric math calls and numeric arr(index) or
 		// arr(i, j). Runtime type checks deopt all other cases to the VM.
-		return nameOK(in.A) && (nativeMathConstantCall(chunk.Names[in.A], in.B) || nativeMathUnaryCall(chunk.Names[in.A], in.B) || nativeMathRoundCall(chunk.Names[in.A], in.B) || nativeMathBinaryCall(chunk.Names[in.A], in.B) || nativeMathClampCall(chunk.Names[in.A], in.B) || in.B == 1 || in.B == 2)
+		return nameOK(in.A) && (nativeMathConstantCall(chunk.Names[in.A], in.B) || nativeMathUnaryCall(chunk.Names[in.A], in.B) || nativeMathRoundCall(chunk.Names[in.A], in.B) || nativeMathBinaryCall(chunk.Names[in.A], in.B) || nativeMathClampCall(chunk.Names[in.A], in.B) || nativeKindCall(chunk.Names[in.A], in.B) || in.B == 1 || in.B == 2)
 
 	case bytecode.OpArrStore:
 		// In-bounds numeric writes into 1D (B==0) or 2D (B==1) arrays only.
@@ -369,6 +369,9 @@ func nativeMathRoundCall(name string, argc int32) bool {
 // hasSSE41: ob der Prozessor die SSE4.1-Rundung (roundsd) beherrscht. Die
 // Rundungs-Fastpaths (Floor/Ceil/Trunc/Int) sind bitidentisch, brauchen aber
 // SSE4.1; ohne Fähigkeit bleiben die Aufrufe in der VM.
+// hasFMA: Go setzt useFMA = AVX && FMA und archExp wählt in exp_amd64.s
+// dann den VFMADD-Pfad. Nur wenn beide Flags vorhanden sind, kann der
+// Native-Pfad denselben Befehlsstrom spiegeln; sonst bleibt Exp in der VM.
 var hasSSE41 = cpuidNative()
 
 func nativeMathUnaryCall(name string, argc int32) bool {
@@ -381,6 +384,10 @@ func nativeMathUnaryCall(name string, argc int32) bool {
 	case "math.floor", "math.ceil", "math.trunc", "math.int":
 		// roundsd (SSE4.1) ist bitidentisch zu math.Floor/Ceil/Trunc.
 		return hasSSE41
+	case "math.exp":
+		// archExp (exp_amd64.s) verwendt VFMADD nur wenn AVX && FMA;
+		// sonst läuft der Non-FMA-Pfad - dann kein Native-Pfad.
+		return hasFMA
 	default:
 		return false
 	}
@@ -408,6 +415,18 @@ func nativeMathBinaryCall(name string, argc int32) bool {
 // deoptiert der Pfad in die VM, die denselben stdlib-Wert liefert.
 func nativeMathClampCall(name string, argc int32) bool {
 	return argc == 3 && strings.EqualFold(name, "math.clamp")
+}
+
+// nativeKindCall: reine Value-Kind-Abfragen ohne Go-Aufrufe oder Zeigerzugriffe.
+func nativeKindCall(name string, argc int32) bool {
+	switch strings.ToLower(name) {
+	case "isarray", "ismap", "isstring":
+		return argc == 0 || argc == 1
+	case "isnull", "isnothing":
+		return argc == 0 || argc == 1
+	default:
+		return false
+	}
 }
 
 // minDepth ist die minimale Stack-Tiefe, die der Opcode beim Eintritt braucht

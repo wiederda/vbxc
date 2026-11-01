@@ -262,6 +262,54 @@ in der alten Form.
   ~0,39 s vs. JIT ~0,023 s pro Durchlauf (~17,5x).
   e2e ueber `vbxc build windows` + `vbxr` liefern identische Ausgaben.
 
+## Runde 10: Exp-Fastpath
+- `math.Exp` läuft nativ als bitidentische Spiegelung des avxfma-Zweigs
+  aus Go's archExp (math/exp_amd64.s, SLEEF-Methode nach Shibata,
+  ISC'10): Argumentreduktion ueber k = CVTSD2SI(LOG2E*x) - beachte
+  CVTSD2SL rundet nach MXCSR (round-to-nearest-even), NICHT trunc
+  (das waere CVTTSD2SL) -, VFNMADD231SD-Reduktion mit LN2U/LN2L
+  (auf der Hardware verifiziert: fuer die SD-Variante muss VEX-
+  Byte3 W~=1 sein (0xF1-Muster der Go-Assembler-Referenz); W~=0
+  excodiert die PS-Form (float32) - beide Faelle im Mikrotest
+  belegt),
+  Horner-Taylor bis 1/8! komplett in FMA (VFMADD213SD-Referenz
+  durch Plan9-Assembler-Proben verifiziert), vier (1+x)^2-Verdopplungen
+  (drei MUL-Paare, die 4. in das abschliessende VFMADD213SD mit 1.0
+  fused), ldexp ueber das Exponentenfeld ((k+0x3FF)<<52; Denormal-
+  zweig multipliziert zusaetzlich mit 2^-1022 - MOVQ $1; SHLQ $52,
+  NICHT mit 1.0).
+- CPU-Gate: `hasFMA` (cpu_amd64.go) = AVX && FMA3, exakt wie Go's
+  useFMA inklusive `GODEBUG=cpu.avx/cpu.fma/cpu.all=off`; ohne FMA bleibt
+  Exp in der VM. Maschinencode-Dateien speichern seit Version 3 ihre
+  SSE4.1-/AVX-/FMA-Anforderungen und prüfen sie beim Laden. Neue Encoder in
+  jit/asm_amd64.go: vex3, vfmadd213SD, vfnmadd231SD, vaddSD,
+  cvtsd2si32 (RNE) neben cvttsd2si32 (trunc).
+- Sonderfaelle identisch zur Assembly: x > 709.7827... -> +Inf
+  (Deopt auf den VM-Wert), Overflow nach ldexp (k+0x3FF >= 0x7FF)
+  -> VM, Underflow (BX < -52 -> Denormalverarbeitung 0) -> 0,
+  NaN/+Inf/-Inf-Maske -> VM (identische Bits). Str-Argumente
+  deoptieren in die mathArg-Konvertierung.
+- Hardware-Verifikation: Mikrotests (jit/fmaenc_test.go) fuehren
+  jede neue Instruktion einzeln auf echter Hardware aus (vaddSD,
+  vfmadd213SD, vfnmadd231SD, cvtsd2si32-RNE vs cvttsd2si32-trunc);
+  Plan9-Assembler-Proben (jit/fmaprobe_amd64.s) liefern die
+  Encodier-Referenz (objdump gegen den Byte-Stream).
+- Kanarien-Region um math.Exp erweitert - Cache-Invalidierung
+  automatisch ueber den Codegen-Fingerprint.
+- Paritaet: TestProgramm `mathe-exp` in vm/jit_test.go: Overflow-
+  Grenzen (709/709.9/710/1000), Underflow (-745/-745.5/-750 mit
+  Denormalergebnis 5e-324), int32-Indefinit-Trap (Exp(big*big)),
+  NearZero-Formen (Exp(+-3e-10) = 1+-3e-10), Str/Bool-Deopts und
+  eine 100000-Iterations-Schleife - identische Ausgaben. Grosse
+  Werte entstehen ueber Arithmetik (die Sprache hat keine
+  Exponent-Literale; "1e300" wuerde als Variable gelesen).
+- Native-Proof `TestExpNative`: Regions=1, Skipped=2 (nur
+  PRINT/HALT in der VM).
+- Benchmark (i7-8750H, 1M-Iterationsloop mit 2 Exp-Calls;
+  -benchtime 10x, count=3): VM-Interpreter ~0,64 s vs. JIT
+  ~0,096 s pro Durchlauf (~6,6x).
+  e2e ueber `vbxc build windows` + `vbxr` liefern identische Ausgaben.
+
 ## Maschinencode-Dateien (.vbb "VBXM", neu in vbxc)
 - `vbxc build <datei.vb> -t windows|linux` erzeugt eine Maschinencode-Datei
   ("VBXM"-Format, amd64): Chunk (als Daten für nicht-nativ übersetzte

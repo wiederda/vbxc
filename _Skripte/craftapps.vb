@@ -1,14 +1,7 @@
 #use json,net,string,zip
-<<<<<<< HEAD
 
 Dim repos = {"storytold/photocraft","storytold/filmcraft"}
 Dim config="/volume2/homes/cb/craft.txt"
-=======
-'Benötigt: zip plugin. Im gleichen Unterverzeichnis plugin von vbxc 
-
-Dim repos = {"storytold/photocraft","storytold/filmcraft"}
-Dim config="<path>/craft.txt"
->>>>>>> 1a75fee5075b59ae56e731fda08bf18a063c2ad9
 Dim photo=file.ReadValue(config,"photo=")
 Dim film=file.ReadValue(config,"film=")
 Dim webpath=file.ReadValue(config,"webpath=")

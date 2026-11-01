@@ -37,12 +37,10 @@ For i = 1 To 5
     s = s + math.Abs(i) + math.Sign(b) + math.Sqrt(a)
     s = s + math.Floor(i / 2) + math.Ceil(i / 3) + math.Trunc(i / 4)
     s = s + math.DegToRad(i) + math.RadToDeg(i)
-<<<<<<< HEAD
     s = s + math.Mod(i, 7) + math.Percent(i, 4) + math.PercentOf(i, 2 * i)
     s = s + math.Round(i * 0.7) + math.RoundBank(i * 1.3)
     s = s + math.Clamp(i, 1, 4)
-=======
->>>>>>> 1a75fee5075b59ae56e731fda08bf18a063c2ad9
+    s = s + math.Exp(i) + math.Exp(-i / 2)
     If a = b Then
         s = s * 2
     End If

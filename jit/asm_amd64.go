@@ -51,6 +51,7 @@ const (
 	ccP  = 10 // parity (PF=1) = ungerichtet (NaN)
 	ccL  = 12 // less (SF!=OF)
 	ccGE = 13 // greater or equal (SF==OF)
+	ccLE = 14 // less or equal (ZF=1 | SF!=OF)
 	ccG  = 15 // greater (SF==OF & ZF=0)
 )
 
@@ -550,6 +551,100 @@ func (a *asm) cvttsd2si(r, x int) {
 	a.rex(true, r, 0, x)
 	a.emit(0x0F, 0x2C)
 	a.modrm(r, x)
+}
+
+// cvtsd2si32: r32 <- int32(round(xmm)) - CVTSD2SL im archExp (F2 0F 2D):
+// rundet nach dem MXCSR-Rundungsmodus (Standard: round-to-nearest-even),
+// Overflow -> 0x80000000. Nicht verwechseln mit cvttsd2si (F2 0F 2C, trunc).
+func (a *asm) cvtsd2si32(r, x int) {
+	a.emit(0xF2)
+	if r&8 != 0 || x&8 != 0 {
+		a.rex(false, r, 0, x)
+	}
+	a.emit(0x0F, 0x2D)
+	a.modrm(r, x)
+}
+
+// cvttsd2si32: r32 <- int32(trunc(xmm)); upper bits land zero-extended
+// in the full register (including overflow result 0x80000000).
+func (a *asm) cvttsd2si32(r, x int) {
+	a.emit(0xF2)
+	if r&8 != 0 || x&8 != 0 {
+		a.rex(false, r, 0, x)
+	}
+	a.emit(0x0F, 0x2C)
+	a.modrm(r, x)
+}
+
+// cvtsi2sd32: xmm <- float64(int32(r)) - CVTSL2SD (upper bits of r are
+// ignored).
+func (a *asm) cvtsi2sd32(x, r int) {
+	a.emit(0xF2)
+	if x&8 != 0 || r&8 != 0 {
+		a.rex(false, x, 0, r)
+	}
+	a.emit(0x0F, 0x2A)
+	a.modrm(x, r)
+}
+
+// addRI32: r32 += imm32 (opcode 81 /0 without REX.W -> 32-bit operation;
+// upper bits remain zero-extended values).
+func (a *asm) addRI32(r int, imm int32) {
+	if r&8 != 0 {
+		a.emit(0x41)
+	}
+	a.emit(0x81)
+	a.modrm(0, r)
+	a.u32(uint32(imm))
+}
+
+// cmpRI32: signed 32-bit compare r32 with imm32.
+func (a *asm) cmpRI32(r int, imm int32) {
+	if r&8 != 0 {
+		a.emit(0x41)
+	}
+	a.emit(0x81)
+	a.modrm(7, r)
+	a.u32(uint32(imm))
+}
+
+// vex3: 3-byte VEX-Header. m: 1 = 0F, 2 = 0F38; p: 0x01 = 66, 0x03 = F2.
+// Bit-R = ~dst>>3, X' = 1 (keine SIB-Index), B' = ~src2>>3, vv' = ~src1.
+func (a *asm) vex3(dst, src1, src2, m int, w byte, p byte, opcode byte) {
+	b2 := byte(m)
+	if dst&8 == 0 {
+		b2 |= 0x80 // R' = 1: kein Register-Extension-Bit
+	}
+	b2 |= 0x40 // X' = 1: kein Index
+	if src2&8 == 0 {
+		b2 |= 0x20 // B' = 1: kein RM-Extension-Bit
+	}
+	a.emit(0xC4, b2, w|byte((^src1&0xF)<<3)|p, opcode)
+}
+
+// vfmadd213SD: dst = src1*dst + src2 (VFMADD213SD, 66 0F38 W1 A9).
+// Encodierung exakt nach Go-Assembler-Referenz (objdump der
+// fmaprobe_amd64.s-Proben: c4 e2 f1 a9 c2): vvvv = src1 (Multiplikations-
+// partner), rm = src2 (Summand), Byte3 = 0xF1 (W~=1, pp=01). Auf dieser CPU
+// entscheidet W über die SD-Variante: W~=0 excodiert die PS-Form (float32!).
+// AVX/FMA erforderlich; nur mit derselben CPU-Fähigkeit wie Go's math.useFMA
+// ausgeben.
+func (a *asm) vfmadd213SD(dst, src1, src2 int) {
+	a.vex3(dst, src1, src2, 2, 0x80, 0x01, 0xA9)
+	a.modrm(dst, src2)
+}
+
+// vfnmadd231SD: dst = -(src1*src2) + dst (VFNMADD231SD, 66 0F38 W1 BD).
+// Go-Referenz: c4 e2 f1 bd c2 - vvvv = src1, rm = src2, W~=1.
+func (a *asm) vfnmadd231SD(dst, src1, src2 int) {
+	a.vex3(dst, src1, src2, 2, 0x80, 0x01, 0xBD)
+	a.modrm(dst, src2)
+}
+
+// vaddSD: dst = src1 + src2 (VADDSD, F2 0F58; WIG -> W=0).
+func (a *asm) vaddSD(dst, src1, src2 int) {
+	a.vex3(dst, src1, src2, 1, 0x00, 0x03, 0x58)
+	a.modrm(dst, src2)
 }
 
 // cqo: RDX:RAX <- Vorzeichenwort von RAX (Vorbereitung für signed idiv).

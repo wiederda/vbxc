@@ -35,14 +35,13 @@ Aufwand meint den relativen Implementierungs- und Absicherungsaufwand:
   Grenzfälle int(y)==0, INT64-min und Nicht-Num-Operanden)
 - `math.DegToRad` und `math.RadToDeg` für numerische Argumente; die Fast Paths
   behalten die Operationsreihenfolge der Standardbibliothek bei
-<<<<<<< HEAD
 - `math.Percent` und `math.PercentOf` für numerische Argumente; bei
   `PercentOf` mit Nenner 0 oder NaN deoptiert der JIT zur VM, damit der
   vorhandene Fehler- bzw. Sonderfallpfad erhalten bleibt
 - `math.Pi()` und `math.E()` als native numerische Konstanten; ein
   gleichnamiger Wert im Skript-Scope führt weiterhin zur VM-Auflösung
-=======
->>>>>>> 1a75fee5075b59ae56e731fda08bf18a063c2ad9
+- `IsArray`, `IsMap`, `IsString`, `IsNull` und `IsNothing` prüfen ihre
+  Value-Kinds nativ; fehlende Argumente behalten die jeweiligen VM-Ergebnisse
 - `For Each` über 1D-Arrays (`OpEachInit`/`OpEachNext`): Elemente der
   Kinds Num/Bool/Null werden nativ in die Loop-Variablen geschrieben,
   die Zwei-Variablen-Form (`For Each k, v`) schreibt den Num-Schlüssel
@@ -56,15 +55,9 @@ deoptieren diese Pfade zur VM.
 
 | Priorität | Bereich | Aufwand | Warum noch VM / Abgrenzung |
 |---|---|---:|---|
-<<<<<<< HEAD
 | 1 | ~~Weitere einfache numerische `math.*`-Funktionen, zuerst `Floor`, `Ceil`, `Trunc` und `Int`~~ **erledigt** | Mittel | `roundsd` (SSE4.1) liefert `Floor`/`Ceil`/`Trunc`/`Int` bitidentisch zu Go (NaN, ±Inf, ±0 laufen durch); CPU-Fähigkeit wird geprüft, Reste deoptieren. `Round` und `RoundBank` sind inzwischen für `Trunc(d)==0` ebenfalls nativ abgedeckt; Fälle mit anderen Rundungsstellen deoptieren. |
-| 2 | Numerische Fast Paths für weitere `math.*`-Funktionen | Mittel bis hoch | `DegToRad`, `RadToDeg`, `Percent`, `PercentOf`, `Round` (Bit-Spiegelung des Go-Algorithmus) und `RoundBank` (roundsd Ties-Even) sind nativ (Runde 7/8; nur `Trunc(d)==0` bei Round/RoundBank). NaN als `d` deoptiert korrekt zur VM. Offen: `Pow`, `Log`, `Exp` und trigonometrische Funktionen - sie brauchen Spezialfälle oder eine Bibliotheksimplementierung. Zunächst nur Funktionen aufnehmen, deren Ergebnis und Fehlerfälle exakt abgeglichen sind. |
-| 3 | Häufige einfache Standardfunktionen mit primitiven Ergebnissen | Mittel | `math.Pi()` und `math.E()` liefern ihre numerischen Konstanten nativ; `math.Clamp` läuft als Komposition `Max(lo, Min(x, hi))` aus den nativen Min/Max-Pfaden (Runde 9). Viele globale/string-/convert-Funktionen konvertieren Strings, erstellen Strings oder geben Fehler zurück. Pro Funktion einzeln entscheiden; Konvertierungen und Fehler weiter deoptieren lassen. |
-=======
-| 1 | ~~Weitere einfache numerische `math.*`-Funktionen, zuerst `Floor`, `Ceil`, `Trunc` und `Int`~~ **erledigt** | Mittel | `roundsd` (SSE4.1) liefert `Floor`/`Ceil`/`Trunc`/`Int` bitidentisch zu Go (NaN, ±Inf, ±0 laufen durch); CPU-Fähigkeit wird geprüft, Reste deoptieren. `Round`/`RoundBank` bleiben wie geplant separat. |
-| 2 | Numerische Fast Paths für weitere `math.*`-Funktionen | Mittel bis hoch | `DegToRad` und `RadToDeg` sind für numerische Argumente nativ. Funktionen wie `Pow`, `Log`, `Exp`, trigonometrische Funktionen und Prozent-Helfer brauchen Spezialfälle oder eine Bibliotheksimplementierung. Zunächst nur Funktionen aufnehmen, deren Ergebnis und Fehlerfälle exakt abgeglichen sind. |
-| 3 | Häufige einfache Standardfunktionen mit primitiven Ergebnissen | Mittel | Viele globale/string-/convert-Funktionen konvertieren Strings, erstellen Strings oder geben Fehler zurück. Pro Funktion einzeln entscheiden; Konvertierungen und Fehler weiter deoptieren lassen. |
->>>>>>> 1a75fee5075b59ae56e731fda08bf18a063c2ad9
+| 2 | Numerische Fast Paths für weitere `math.*`-Funktionen | Mittel bis hoch | `DegToRad`, `RadToDeg`, `Percent`, `PercentOf`, `Round` (Bit-Spiegelung des Go-Algorithmus) und `RoundBank` (roundsd Ties-Even) sind nativ (Runde 7/8; nur `Trunc(d)==0` bei Round/RoundBank). NaN als `d` deoptiert korrekt zur VM. `Exp` ist nativ als bitidentische Spiegelung des avxfma-Zweigs von Go's archExp (Runde 10; nur mit AVX+FMA wie Go's useFMA, einschließlich GODEBUG-CPU-Schaltern; hardwareverifizierte VEX/FMA-Encoder). Maschinencode-Dateien weisen beim Laden fehlende SSE4.1-/AVX-/FMA-Features zurück. Offen: `Pow`, `Log` und trigonometrische Funktionen (konventionelle Pfade ohne FMA-Nutzung oder Bibliotheksimplementierung) - sie brauchen Spezialfälle oder eine Bibliotheksimplementierung. Zunächst nur Funktionen aufnehmen, deren Ergebnis und Fehlerfälle exakt abgeglichen sind. |
+| 3 | Häufige einfache Standardfunktionen mit primitiven Ergebnissen | Mittel | `math.Pi()` und `math.E()` liefern ihre numerischen Konstanten nativ; `math.Clamp` läuft als Komposition `Max(lo, Min(x, hi))` aus den nativen Min/Max-Pfaden (Runde 9). Die globalen Typprüfungen `IsArray`, `IsMap`, `IsString`, `IsNull` und `IsNothing` lesen nur das Value-Kind und schreiben ein Bool. Viele globale/string-/convert-Funktionen konvertieren Strings, erstellen Strings oder geben Fehler zurück. Pro Funktion einzeln entscheiden; Konvertierungen und Fehler weiter deoptieren lassen. |
 | 4 | Variablenzugriffe für weitere Value-Kinds | Hoch | Strings, Arrays, Maps, Objekte und Fehler enthalten Go-Zeiger. Lesen/Schreiben muss GC-sicher sein und bei Stores die Write Barrier beachten. |
 | 5 | Allgemeine Array-Lesezugriffe und -Stores | Hoch | Der heutige native Pfad deckt nur numerische Elemente und enge Fälle ab. Beliebige Werte erfordern sichere Kopien von Go-Zeigern, Bounds-/Typfehler und 1D-/2D-Semantik. |
 | 6 | Array-Erzeugung, Dimensionierung ~~und `For Each`~~ (ForEach: **erledigt**, siehe Runde 6) | Hoch | `For Each` über 1D-Arrays läuft nativ (EachInit/EachNext, Elemente Num/Bool/Null, sonst Deopt). Die Erzeugung/Dimensionierung von Arrays im Maschinencode wäre ein neuer Teil: Allokationen müssen über Go erfolgen; als erstes wäre ein sicherer Laufzeit-Helper statt direkter Allokation im Maschinencode zu prüfen. |

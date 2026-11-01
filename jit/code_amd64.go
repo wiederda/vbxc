@@ -6,7 +6,8 @@
 // dadurch braucht der Code keine Write-Barrier. Nicht unterstützte Werte und
 // Aufrufe deopten in die VM; einfache numerische math.*-Aufrufe (Abs, Sign,
 // Sqrt, Min, Max, Mod, Clamp, Floor, Ceil, Trunc, Int, DegToRad, RadToDeg,
-// Percent, PercentOf, Round, RoundBank, Pi(), E()) sind spezialisiert. Round
+// Percent, PercentOf, Round, RoundBank, Pi(), E(), IsArray, IsMap, IsString,
+// IsNull und IsNothing) sind spezialisiert. Round
 // spiegelt den Go-Algorithmus bitidentisch als Integer-Logik, RoundBank ist
 // über roundsd (SSE4.1) zu math.RoundToEven identisch; nur die Trunc(d)-0-Form
 // (inkl. |d| < 1) läuft nativ, andere Nachkommastellen deoptieren.
@@ -57,6 +58,9 @@ const (
 	kError = int32(value.KindError)
 	kObj   = int32(value.KindObj)
 	kNil   = int32(value.KindNil)
+	kMap   = int32(value.KindMap)
+	kNone  = int32(value.KindNone)
+	kUndef = int32(value.KindUndefined)
 
 	// ctx-Felder als int32 (die Encoder arbeiten mit int32-Displacements).
 	ctxStack  = int32(offCtxStack)
@@ -600,6 +604,109 @@ func (g *cg) emitOp(i int) {
 				g.wKind(arg, kNum)
 				g.wNumX(arg, xmm0)
 
+			case "math.exp":
+				// Spiegelung des avxfma-Zweigs in Go's math/exp_amd64.s
+				// (SLEEF-Methode, Shibata: ISC'10). Die VM's math.Exp ist
+				// archExp - das pure-Go-Exp in exp.go dient nur anderen
+				// Architekturen. Nur mit (AVX && FMA) == Go useFMA
+				// ausgewählt; sonst läuft resteriete Exp in der VM und
+				// liefert denselben Bitwert. Alle Sonderfälle (NaN, ±Inf,
+				// Overflow > 7.09782712893384e+02, UNDERFLOW bis zu den
+				// Denormal-Ergebnissen) folgen denselben gpr-/ldexp-Deopts.
+				// xmm0 = arbeitsregister, xmm1 = Scratch, xmm2 = Konstante.
+				g.a.movRM(rax, r13, arg*sz+offNum) // Bits von x
+				// notFinite: |x| >= 0x7FF0000000000000 (NaN, ±Inf)
+				g.a.movRR(rdi, rax)
+				g.a.movRI(rcx, 0x7fffffffffffffff)
+				g.a.andRR(rdi, rcx)
+				g.a.movRI(rcx, 0x7ff0000000000000)
+				g.a.cmpRR(rdi, rcx)
+				g.a.jcc(ccAE, dep) // +Inf, NaN, -Inf → VM (gleiche Bits)
+				g.a.movsdL(0, r13, arg*sz+offNum)
+				g.a.movRI(rdx, math.Float64bits(7.09782712893384e+02))
+				g.a.movqX(1, rdx)
+				g.a.ucomisd(0, 1)
+				g.a.jcc(ccA, dep) // x > Overflow → VM gibt +Inf
+				// X1 = LOG2E * x; K = CVTSD2SL; CVTSL2SD
+				g.a.movRI(rdx, math.Float64bits(1.4426950408889634073599246810018920))
+				g.a.movqX(1, rdx)
+				g.a.arithSD(0x59, 1, 0) // mulsd X1 = X1*X0 (LOG2E * x)
+				g.a.cvtsd2si32(rax, 1)  // CVTSD2SL: RNE-Rundung, nicht trunc!
+				g.a.cvtsi2sd32(1, rax)
+				// X0 = x - LN2U*k - LN2L*k (zwei fused-negative-multiply-adds)
+				g.a.movRI(rdx, math.Float64bits(0.69314718055966295651160180568695068359375))
+				g.a.movqX(2, rdx)
+				g.a.vfnmadd231SD(0, 2, 1)
+				g.a.movRI(rdx, math.Float64bits(0.28235290563031577122588448175013436025525412068e-12))
+				g.a.movqX(2, rdx)
+				g.a.vfnmadd231SD(0, 2, 1)
+				// Argument verkleinern: MULSD $0.0625, X0
+				g.a.movRI(rdx, math.Float64bits(0.0625))
+				g.a.movqX(2, rdx)
+				g.a.arithSD(0x59, 0, 2) // mulsd X0, X0? -> X0 = X0*X2
+				// Taylor: X1 = 1/8!; Horner: X1 = X0*X1 + (1/n!) x7.
+				g.a.movRI(rdx, math.Float64bits(2.4801587301587301587e-05))
+				g.a.movqX(1, rdx)
+				for _, coef := range []float64{
+					1.9841269841269841270e-04, // 1/7!
+					1.3888888888888888889e-03, // 1/6!
+					8.3333333333333333333e-03, // 1/5!
+					4.1666666666666666667e-02, // 1/4!
+					1.6666666666666666667e-01, // 1/3!
+					0.5,                       // 1/2!
+					1.0,                       // 1/1!
+				} {
+					g.a.movRI(rdx, math.Float64bits(coef))
+					g.a.movqX(2, rdx)
+					g.a.vfmadd213SD(1, 0, 2)
+				}
+				g.a.arithSD(0x59, 0, 1) // MULSD X1, X0 -> X0 = X0*X1
+				// Vier Verdopplungen (asm 151-158): 3x (VADDSD,
+				// MULSD), dann 1x VADDSD und die 4. Verdopplung
+				// fused in das finale VFMADD213SD mit 1.0.
+				g.a.movRI(rdx, math.Float64bits(2.0))
+				g.a.movqX(2, rdx)
+				for n := 0; n < 3; n++ {
+					g.a.vaddSD(1, 0, 2)
+					g.a.arithSD(0x59, 0, 1)
+				}
+				g.a.vaddSD(1, 0, 2)
+				g.a.movRI(rdx, math.Float64bits(1.0))
+				g.a.movqX(2, rdx)
+				g.a.vfmadd213SD(0, 1, 2)
+				// ldexp in Bitologie (asm 'ldexp'): BX += 0x3FF, signed 32.
+				g.a.addRI32(rax, 0x3FF)
+				denormal := g.a.label()
+				expDone := g.a.label()
+				g.a.cmpRI32(rax, 0)
+				g.a.jcc(ccLE, denormal)
+				g.a.cmpRI32(rax, 0x7FF)
+				g.a.jcc(ccGE, dep) // Overflow → VM gibt +Inf
+				g.a.shlRI(rax, 52) // 2^k als Exponentenfeld
+				g.a.movqX(1, rax)
+				g.a.arithSD(0x59, 0, 1) // MULSD X1, X0
+				g.a.jmp(expDone)
+				// denormal: weitere k < -52-Rückwort. BX = k + 0x3FF <= 0
+				// und BX < -52 → underflow (VM gibt 0); sonst einmal
+				// exakt wie asm: *2^(BX-1)... via ADDL 0x3FE, dann via
+				// lastStep (= Multiplikator 1.0).
+				g.a.mark(denormal)
+				g.a.cmpRI32(rax, -52)
+				g.a.jcc(ccL, dep) // Underflow → VM gibt 0
+				g.a.addRI32(rax, 0x3FE)
+				g.a.shlRI(rax, 52)
+				g.a.movqX(1, rax)
+				g.a.arithSD(0x59, 0, 1) // X0 *= 2^(k+0x7FD)
+				// asm: MOVQ $1, BX; JMP lastStep; SHLQ $52 → Multiplikator
+				// 1<<52 = die Bits von 2^-1022 (nicht 1.0!).
+				g.a.movRI(rdx, 1)
+				g.a.shlRI(rdx, 52)
+				g.a.movqX(1, rdx)
+				g.a.arithSD(0x59, 0, 1) // X0 *= 2^-1022
+				g.a.mark(expDone)
+				g.wKind(arg, kNum)
+				g.wNumX(arg, 0)
+
 			// roundsd (SSE4.1) rundet bitidentisch zu Go (NaN, ±Inf, ±0
 			// laufen unverändert durch); supported() schaltet die Fälle nur
 			// mit CPU-Fähigkeit frei.
@@ -893,6 +1000,58 @@ func (g *cg) emitOp(i int) {
 			g.wKind(xs, kNum)
 			g.wNumX(xs, 0)
 			g.fall(i, d-2)
+			g.deoptBlock(dep, i, d)
+			return
+		}
+		if nativeKindCall(callName, in.B) {
+			// Built-in type predicates read only the Kind tag. They return a
+			// primitive Bool, so no Go pointer or write barrier is involved.
+			g.cellAndFlags(g.slotIdxOf(callName, false))
+			g.a.cmpRI(rdx, 0)
+			g.a.jcc(ccNE, dep)
+			argc := int32(in.B)
+			base := d - argc
+			result := g.a.label()
+			truth := g.a.label()
+			if argc == 0 {
+				if strings.EqualFold(callName, "isnull") || strings.EqualFold(callName, "isnothing") {
+					g.a.jmp(truth)
+				} else {
+					g.a.jmp(result)
+				}
+			} else {
+				g.a.movRM(rax, r13, base*sz+offKind)
+				switch strings.ToLower(callName) {
+				case "isarray":
+					g.a.cmpRI(rax, kArr)
+					g.a.jcc(ccE, truth)
+					g.a.cmpRI(rax, kArr2D)
+					g.a.jcc(ccE, truth)
+				case "ismap":
+					g.a.cmpRI(rax, kMap)
+					g.a.jcc(ccE, truth)
+				case "isstring":
+					g.a.cmpRI(rax, kStr)
+					g.a.jcc(ccE, truth)
+				case "isnull", "isnothing":
+					for _, kind := range []int32{kNull, kNil, kNone, kUndef} {
+						g.a.cmpRI(rax, kind)
+						g.a.jcc(ccE, truth)
+					}
+				}
+			}
+			g.a.mark(result)
+			g.pushPrologue(base)
+			g.wKind(base, kBool)
+			g.a.movRI(rdx, 0)
+			g.wBoolReg(base, rdx)
+			g.fall(i, base+1)
+			g.a.mark(truth)
+			g.pushPrologue(base)
+			g.wKind(base, kBool)
+			g.a.movRI(rdx, 1)
+			g.wBoolReg(base, rdx)
+			g.fall(i, base+1)
 			g.deoptBlock(dep, i, d)
 			return
 		}
