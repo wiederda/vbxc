@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wiederda/pathutils"
 	"hash"
 	"io"
 	"os"
@@ -29,6 +28,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 	valpkg "vbxc/value"
+
+	"github.com/wiederda/pathutils"
 )
 
 //var replaceAfterRunPath string
@@ -1442,13 +1443,21 @@ func initFileFunctions() {
 		}
 	})
 
-	Register(ns+"InsertAfter", "file", "pfad, ausgabepfad, suchtext, einfügen", "Fügt in jeder Zeile nach der ersten Fundstelle des Suchtextes den angegebenen Text ein. Ist der Ausgabepfad leer, wird die Originaldatei überschrieben.", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"InsertLineAfter", "file", "pfad, ausgabepfad, suchtext, neuezeile, [alle]",
+		"Fügt nach der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein, sofern es diese Zeile noch nicht gibt. Optional: nach allen passenden Zeilen. Gibt die Anzahl eingefügter Zeilen zurück (0 = nicht gefunden oder bereits vorhanden).",
+		func(args []valpkg.Value) valpkg.Value { return insertLineRelative(args, false) })
+
+	Register(ns+"InsertLineBefore", "file", "pfad, ausgabepfad, suchtext, neuezeile, [alle]",
+		"Fügt vor der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein, sofern es diese Zeile noch nicht gibt. Optional: vor allen passenden Zeilen. Gibt die Anzahl eingefügter Zeilen zurück (0 = nicht gefunden oder bereits vorhanden).",
+		func(args []valpkg.Value) valpkg.Value { return insertLineRelative(args, true) })
+
+	Register(ns+"InsertTextAfter", "file", "pfad, ausgabepfad, suchtext, einfügen", "Fügt in jeder Zeile nach der ersten Fundstelle des Suchtextes den angegebenen Text ein. Ist der Ausgabepfad leer, wird die Originaldatei überschrieben.", func(args []valpkg.Value) valpkg.Value {
 		if len(args) < 4 {
-			return valpkg.ErrorVal("InsertAfter erwartet vier Parameter: Pfad, Ausgabepfad, Suchtext und Einfügetext")
+			return valpkg.ErrorVal("InsertTextAfter erwartet vier Parameter: Pfad, Ausgabepfad, Suchtext und Einfügetext")
 		}
 
 		// --- Eingabepfad ---
-		pathStr, errS := expectStr(args, 0, "file.InsertAfter(pfad, ausgabepfad, suchtext, einfügen)")
+		pathStr, errS := expectStr(args, 0, "file.InsertTextAfter(pfad, ausgabepfad, suchtext, einfügen)")
 		if errS != nil {
 			return *errS
 		}
@@ -2544,4 +2553,128 @@ func containsWholeWord(line, word string) bool {
 		_, size := utf8.DecodeRuneInString(line[start:])
 		offset = start + size
 	}
+}
+
+// Gemeinsame Logik für InsertLineAfter / InsertLineBefore
+func insertLineRelative(args []valpkg.Value, before bool) valpkg.Value {
+	name := "InsertLineAfter"
+	if before {
+		name = "InsertLineBefore"
+	}
+	sig := "file." + name + "(pfad, ausgabepfad, suchtext, neuezeile, [alle])"
+
+	if len(args) < 4 {
+		return valpkg.ErrorVal(name + " erwartet mindestens vier Parameter: Pfad, Ausgabepfad, Suchtext, Neue Zeile")
+	}
+
+	pathStr, errS := expectStr(args, 0, sig)
+	if errS != nil {
+		return *errS
+	}
+	path, errVal := absPathVal(pathStr)
+	if errVal != nil {
+		return *errVal
+	}
+
+	outputStr, errS := expectStr(args, 1, sig)
+	if errS != nil {
+		return *errS
+	}
+	outputPath := path
+	if outputStr != "" {
+		outputPath, errVal = absPathVal(outputStr)
+		if errVal != nil {
+			return *errVal
+		}
+	}
+
+	searchText, errS := expectStr(args, 2, sig)
+	if errS != nil {
+		return *errS
+	}
+	if searchText == "" {
+		return valpkg.ErrorVal(name + ": Der Suchtext darf nicht leer sein")
+	}
+
+	newLine, errS := expectStr(args, 3, sig)
+	if errS != nil {
+		return *errS
+	}
+	all := len(args) > 4 && valpkg.ToBool(args[4])
+
+	// --- Lesen ---
+	file, err := openFileShared(path)
+	if err != nil {
+		return valpkg.ErrorVal("Fehler beim Öffnen der Datei: " + err.Error())
+	}
+	data, err := io.ReadAll(file)
+	file.Close()
+	if err != nil {
+		return valpkg.ErrorVal("Fehler beim Lesen der Datei: " + err.Error())
+	}
+
+	content := string(data)
+	isCRLF := strings.Contains(content, "\r\n")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	hasTrailingNL := strings.HasSuffix(content, "\n")
+	content = strings.TrimSuffix(content, "\n")
+	lines := strings.Split(content, "\n")
+
+	newTrim := strings.TrimSpace(newLine)
+
+	// --- Duplikat-Prüfung (Modus "erste Fundstelle"): Eintrag irgendwo vorhanden? ---
+	if !all {
+		for _, l := range lines {
+			if strings.TrimSpace(l) == newTrim {
+				return valpkg.NumVal(0) // existiert schon, nichts zu tun
+			}
+		}
+	}
+
+	// --- Einfügen ---
+	result := make([]string, 0, len(lines)+1)
+	inserted := 0
+	for i, line := range lines {
+		isMatch := (all || inserted == 0) && strings.HasPrefix(strings.TrimSpace(line), searchText)
+
+		if before {
+			if isMatch {
+				// Im "alle"-Modus: nur einfügen, wenn die Zeile davor nicht schon der Eintrag ist
+				dup := all && len(result) > 0 && strings.TrimSpace(result[len(result)-1]) == newTrim
+				if !dup {
+					result = append(result, newLine)
+					inserted++
+				}
+			}
+			result = append(result, line)
+		} else {
+			result = append(result, line)
+			if isMatch {
+				// Im "alle"-Modus: nur einfügen, wenn die Zeile danach nicht schon der Eintrag ist
+				dup := all && i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == newTrim
+				if !dup {
+					result = append(result, newLine)
+					inserted++
+				}
+			}
+		}
+	}
+
+	if inserted == 0 {
+		return valpkg.NumVal(0)
+	}
+
+	eol := "\n"
+	if isCRLF {
+		eol = "\r\n"
+	}
+	output := strings.Join(result, eol)
+	if hasTrailingNL {
+		output += eol
+	}
+
+	if err := os.WriteFile(outputPath, []byte(output), 0644); err != nil {
+		return valpkg.ErrorVal("Fehler beim Schreiben der Datei: " + err.Error())
+	}
+	return valpkg.NumVal(float64(inserted))
 }

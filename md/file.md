@@ -469,7 +469,7 @@ Plattformübergreifend (Windows, Linux, macOS). Schreiboperationen nutzen `absPa
 
 ---
 
-## file.InsertAfter(pfad, ausgabepfad, suchtext, einfügen)
+## file.InsertTextAfter(pfad, ausgabepfad, suchtext, einfügen)
 - **Konkret:**
   Fügt in jeder Zeile direkt nach der ersten Fundstelle des Suchtextes den angegebenen Text ein.
   Nur das erste Vorkommen pro Zeile wird berücksichtigt, weitere Treffer in derselben Zeile bleiben unverändert.
@@ -483,6 +483,53 @@ Plattformübergreifend (Windows, Linux, macOS). Schreiboperationen nutzen `absPa
   `BoolVal` (`true` bei Erfolg), `ErrorVal` bei leerem Suchtext, fehlenden Parametern oder Lese-/Schreibfehler.
 - **Hinweis:**
   Zeilenumbrüche werden beim Verarbeiten normalisiert: die Ausgabedatei hat immer `\n`-Zeilenenden (auch wenn das Original `\r\n` verwendet hat) und keine abschließende Leerzeile am Dateiende, selbst wenn das Original eine hatte.
+
+---
+
+## file.InsertLineAfter(pfad, ausgabepfad, suchtext, neuezeile, [alle])
+- **Konkret:**
+  Fügt direkt unterhalb der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein.
+  Beim Vergleich werden führende Leerzeichen der Fundzeile ignoriert (`Port=` findet auch `  Port=8080`).
+  Gibt es die neue Zeile bereits, wird nichts eingefügt (Vergleich ohne führende/abschließende Leerzeichen).
+  Ist der Ausgabepfad leer (`""`), wird die Originaldatei überschrieben, andernfalls in den Ausgabepfad geschrieben (Zielverzeichnis muss vorhanden sein).
+- **Parameter:**
+  - `pfad`: Quelldatei.
+  - `ausgabepfad`: Zieldatei, oder `""` um die Quelldatei zu überschreiben.
+  - `suchtext`: Anfang der Zeile, nach der eingefügt wird. Darf nicht leer sein.
+  - `neuezeile`: Die einzufügende Zeile (wird unverändert eingefügt, ohne automatische Einrückung).
+  - `alle` (optional, Standard `false`): Bei `true` wird nach **jeder** passenden Zeile eingefügt.
+- **Rückgabe:**
+  Anzahl der eingefügten Zeilen als Zahl. `0` bedeutet: Suchtext nicht gefunden oder Eintrag bereits vorhanden (in diesem Fall wird die Datei nicht geschrieben).
+  `ErrorVal` bei leerem Suchtext, fehlenden Parametern oder Lese-/Schreibfehler.
+- **Prüfung auf vorhandenen Eintrag:**
+  Ohne `alle` wird die gesamte Datei geprüft: Steht die neue Zeile irgendwo schon, passiert nichts (der Aufruf ist wiederholbar).
+  Mit `alle` wird nur geprüft, ob die Zeile direkt unter der Fundzeile bereits der neue Eintrag ist.
+- **Hinweis:**
+  Zeilenende-Stil (`\n` oder `\r\n`) und ein abschließender Zeilenumbruch bleiben erhalten.
+  Im Unterschied zu `file.InsertTextAfter` wird hier eine **ganze neue Zeile** eingefügt, nicht Text innerhalb einer Zeile.
+
+---
+
+## file.InsertLineBefore(pfad, ausgabepfad, suchtext, neuezeile, [alle])
+- **Konkret:**
+  Fügt direkt oberhalb der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein.
+  Beim Vergleich werden führende Leerzeichen der Fundzeile ignoriert (`Port=` findet auch `  Port=8080`).
+  Gibt es die neue Zeile bereits, wird nichts eingefügt (Vergleich ohne führende/abschließende Leerzeichen).
+  Ist der Ausgabepfad leer (`""`), wird die Originaldatei überschrieben, andernfalls in den Ausgabepfad geschrieben (Zielverzeichnis muss vorhanden sein).
+- **Parameter:**
+  - `pfad`: Quelldatei.
+  - `ausgabepfad`: Zieldatei, oder `""` um die Quelldatei zu überschreiben.
+  - `suchtext`: Anfang der Zeile, vor der eingefügt wird. Darf nicht leer sein.
+  - `neuezeile`: Die einzufügende Zeile (wird unverändert eingefügt, ohne automatische Einrückung).
+  - `alle` (optional, Standard `false`): Bei `true` wird vor **jeder** passenden Zeile eingefügt.
+- **Rückgabe:**
+  Anzahl der eingefügten Zeilen als Zahl. `0` bedeutet: Suchtext nicht gefunden oder Eintrag bereits vorhanden (in diesem Fall wird die Datei nicht geschrieben).
+  `ErrorVal` bei leerem Suchtext, fehlenden Parametern oder Lese-/Schreibfehler.
+- **Prüfung auf vorhandenen Eintrag:**
+  Ohne `alle` wird die gesamte Datei geprüft: Steht die neue Zeile irgendwo schon, passiert nichts (der Aufruf ist wiederholbar).
+  Mit `alle` wird nur geprüft, ob die Zeile direkt über der Fundzeile bereits der neue Eintrag ist.
+- **Hinweis:**
+  Zeilenende-Stil (`\n` oder `\r\n`) und ein abschließender Zeilenumbruch bleiben erhalten.
 
 ---
 
