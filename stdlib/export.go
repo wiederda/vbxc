@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 	valpkg "vbxc/value"
 
 	"github.com/xuri/excelize/v2"
@@ -282,7 +284,7 @@ func initExportFunctions() {
 		}
 	})
 
-	Register(ns+"ToXLSX", "export", "path, data, [sheetName, exclude, append, headers]", "Speichert ein Array oder 2D-Array als XLSX-Datei. Vorhandene Blätter werden standardmäßig ersetzt. Mit append=True werden Daten angehängt. Mit headers können optionale Spaltenüberschriften angegeben werden.", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"ToXLSX", "export", "path, data, [sheetName, exclude, append, headers]", "Speichert ein Array oder 2D-Array als XLSX-Datei. Vorhandene Blätter werden standardmäßig ersetzt. Mit append=True werden Daten angehängt. Mit headers können optionale Spaltenüberschriften angegeben werden (fett). Die Spaltenbreite richtet sich nach dem breitesten Inhalt.", func(args []valpkg.Value) valpkg.Value {
 		if len(args) < 2 {
 			return valpkg.Value{
 				Kind: valpkg.KindStr,
@@ -381,10 +383,6 @@ func initExportFunctions() {
 			}
 		}
 
-		// ------------------------------------------------------------
-		// Blatt existiert
-		// ------------------------------------------------------------
-
 		if sheetIndex >= 0 {
 
 			if !appendMode {
@@ -409,10 +407,7 @@ func initExportFunctions() {
 
 		} else {
 
-			// --------------------------------------------------------
 			// Blatt existiert noch nicht
-			// --------------------------------------------------------
-
 			sheetIndex, err = f.NewSheet(sheetName)
 			if err != nil {
 				return valpkg.Value{
@@ -447,6 +442,18 @@ func initExportFunctions() {
 		}
 
 		// ------------------------------------------------------------
+		// Spaltenbreiten (breitester Inhalt je Spalte)
+		// ------------------------------------------------------------
+
+		colWidths := make(map[int]float64)
+
+		trackWidth := func(colNo int, text string, padding float64) {
+			if w := textWidth(text) + padding; w > colWidths[colNo] {
+				colWidths[colNo] = w
+			}
+		}
+
+		// ------------------------------------------------------------
 		// Zeile schreiben
 		// ------------------------------------------------------------
 
@@ -469,6 +476,8 @@ func initExportFunctions() {
 				); err != nil {
 					return err
 				}
+
+				trackWidth(colIdx+1, valpkg.ToString(cell), 2)
 			}
 
 			return nil
@@ -532,6 +541,9 @@ func initExportFunctions() {
 							Str:  "error: " + err.Error(),
 						}
 					}
+
+					// Fettschrift braucht etwas mehr Platz
+					trackWidth(colIdx+1, valpkg.ToString(cell), 3)
 				}
 
 				rowIdx++
@@ -616,6 +628,37 @@ func initExportFunctions() {
 		}
 
 		// ------------------------------------------------------------
+		// Spaltenbreiten setzen
+		// ------------------------------------------------------------
+
+		for colNo, w := range colWidths {
+
+			colName, err := excelize.ColumnNumberToName(colNo)
+			if err != nil {
+				return valpkg.Value{
+					Kind: valpkg.KindStr,
+					Str:  "error: " + err.Error(),
+				}
+			}
+
+			w = clampWidth(w)
+
+			// Bei Append eine bereits breitere Spalte nicht verkleinern
+			if appendMode {
+				if old, err := f.GetColWidth(sheetName, colName); err == nil && old > w {
+					w = old
+				}
+			}
+
+			if err := f.SetColWidth(sheetName, colName, colName, w); err != nil {
+				return valpkg.Value{
+					Kind: valpkg.KindStr,
+					Str:  "error: " + err.Error(),
+				}
+			}
+		}
+
+		// ------------------------------------------------------------
 		// Aktives Blatt setzen
 		// ------------------------------------------------------------
 
@@ -640,7 +683,7 @@ func initExportFunctions() {
 		}
 	})
 
-	Register(ns+"FromCSV", "export", "path, [sep, exclude]", "Lädt eine CSV-Datei in ein 2D-Array. Leere Zeilen werden ignoriert. (Default-Separator: ;)", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"FromCSV", "export", "path, [sep, exclude, skipHeader]", "Lädt eine CSV-Datei in ein 2D-Array. Leere Zeilen werden ignoriert. Mit skipHeader=True wird die erste nicht leere Zeile (Überschriften) übersprungen. (Default-Separator: ;)", func(args []valpkg.Value) valpkg.Value {
 		if len(args) < 1 {
 			return valpkg.Value{
 				Kind:  valpkg.KindArr2D,
@@ -674,6 +717,16 @@ func initExportFunctions() {
 			for _, ex := range args[2].Arr {
 				excludeSet[valpkg.ToString(ex)] = struct{}{}
 			}
+		}
+
+		// ------------------------------------------------------------
+		// Erste Zeile überspringen (Überschriften)
+		// ------------------------------------------------------------
+
+		skipHeader := false
+
+		if len(args) >= 4 && args[3].Kind == valpkg.KindBool {
+			skipHeader = args[3].Bool
 		}
 
 		rowExcluded := func(row []string) bool {
@@ -783,15 +836,23 @@ func initExportFunctions() {
 
 		res2D := make([][]valpkg.Value, 0, len(records))
 
-		for _, row := range records {
+		headerSkipped := false
 
-			// Ausschluss prüfen
-			if rowExcluded(row) {
-				continue
-			}
+		for _, row := range records {
 
 			// Leere Zeilen ignorieren
 			if rowEmpty(row) {
+				continue
+			}
+
+			// Erste nicht leere Zeile überspringen (Überschriften)
+			if skipHeader && !headerSkipped {
+				headerSkipped = true
+				continue
+			}
+
+			// Ausschluss prüfen
+			if rowExcluded(row) {
 				continue
 			}
 
@@ -811,6 +872,101 @@ func initExportFunctions() {
 		return valpkg.Value{
 			Kind:  valpkg.KindArr2D,
 			Arr2D: res2D,
+		}
+	})
+
+	Register(ns+"CSVHeaders", "export", "path, [sep]", "Liest die erste nicht leere Zeile einer CSV-Datei und gibt sie als Array (Überschriften) zurück. (Default-Separator: ;)", func(args []valpkg.Value) valpkg.Value {
+		emptyResult := valpkg.Value{
+			Kind: valpkg.KindArr,
+			Arr:  []valpkg.Value{},
+		}
+
+		if len(args) < 1 {
+			return emptyResult
+		}
+
+		path := args[0].Str
+
+		// ------------------------------------------------------------
+		// Separator
+		// ------------------------------------------------------------
+
+		separator := ';'
+
+		if len(args) >= 2 &&
+			args[1].Kind == valpkg.KindStr &&
+			args[1].Str != "" {
+
+			separator = rune(args[1].Str[0])
+		}
+
+		// ------------------------------------------------------------
+		// Datei einlesen und bereinigen
+		// ------------------------------------------------------------
+
+		rawContent, err := os.ReadFile(path)
+		if err != nil {
+			return emptyResult
+		}
+
+		rawContent = ensureUTF8(rawContent)
+
+		cleanContent := make([]byte, 0, len(rawContent))
+
+		for _, b := range rawContent {
+			if b >= 32 || b == '\n' || b == '\r' || b == '\t' {
+				cleanContent = append(cleanContent, b)
+			}
+		}
+
+		// ------------------------------------------------------------
+		// Erste nicht leere Zeile lesen
+		// ------------------------------------------------------------
+
+		reader := csv.NewReader(bytes.NewReader(cleanContent))
+
+		reader.Comma = separator
+		reader.LazyQuotes = true
+		reader.FieldsPerRecord = -1
+
+		for {
+			row, err := reader.Read()
+
+			if err == io.EOF {
+				return emptyResult
+			}
+
+			if err != nil {
+				fmt.Println("CSV-Parser-Error:", err)
+				return emptyResult
+			}
+
+			// Zeile überspringen, wenn alle Zellen leer sind
+			empty := true
+			for _, cell := range row {
+				if strings.TrimSpace(cell) != "" {
+					empty = false
+					break
+				}
+			}
+
+			if empty {
+				continue
+			}
+
+			headers := make([]valpkg.Value, len(row))
+
+			for i, cell := range row {
+				headers[i] = valpkg.Value{
+					Kind: valpkg.KindStr,
+					Str:  strings.TrimSpace(cell),
+				}
+			}
+
+			return valpkg.Value{
+				Kind: valpkg.KindArr,
+				Arr:  headers,
+			}
 		}
 	})
 
@@ -996,3 +1152,24 @@ func initExportFunctions() {
 }
 
 func init() { initExportFunctions() }
+
+// textWidth liefert die Länge der längsten Zeile eines Textes in Zeichen.
+func textWidth(s string) float64 {
+	maxLen := 0
+	for _, line := range strings.Split(s, "\n") {
+		if n := utf8.RuneCountInString(line); n > maxLen {
+			maxLen = n
+		}
+	}
+	return float64(maxLen)
+}
+
+func clampWidth(w float64) float64 {
+	if w < 8 {
+		return 8
+	}
+	if w > 80 {
+		return 80
+	}
+	return w
+}
