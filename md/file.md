@@ -486,49 +486,43 @@ Plattformübergreifend (Windows, Linux, macOS). Schreiboperationen nutzen `absPa
 
 ---
 
-## file.InsertLineAfter(pfad, ausgabepfad, suchtext, neuezeile, [alle])
+## file.InsertLineAfter(pfad, ausgabepfad, ankerzeile, neuezeile(n))
 - **Konkret:**
-  Fügt direkt unterhalb der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein.
-  Beim Vergleich werden führende Leerzeichen der Fundzeile ignoriert (`Port=` findet auch `  Port=8080`).
-  Gibt es die neue Zeile bereits, wird nichts eingefügt (Vergleich ohne führende/abschließende Leerzeichen).
+  Fügt direkt unterhalb der Ankerzeile eine oder mehrere neue Zeilen ein.
+  Die Ankerzeile muss einer Zeile der Datei **vollständig** entsprechen (Vergleich ohne führende/abschließende Leerzeichen, Groß-/Kleinschreibung wird beachtet). Gibt es mehrere passende Zeilen, zählt nur die erste.
+  Zeilen, die in der Datei bereits irgendwo vorkommen (Vergleich ohne führende/abschließende Leerzeichen), werden nicht doppelt eingefügt, die übrigen Zeilen werden trotzdem eingetragen. Dubletten innerhalb des Arrays werden ebenfalls entfernt.
   Ist der Ausgabepfad leer (`""`), wird die Originaldatei überschrieben, andernfalls in den Ausgabepfad geschrieben (Zielverzeichnis muss vorhanden sein).
 - **Parameter:**
   - `pfad`: Quelldatei.
   - `ausgabepfad`: Zieldatei, oder `""` um die Quelldatei zu überschreiben.
-  - `suchtext`: Anfang der Zeile, nach der eingefügt wird. Darf nicht leer sein.
-  - `neuezeile`: Die einzufügende Zeile (wird unverändert eingefügt, ohne automatische Einrückung).
-  - `alle` (optional, Standard `false`): Bei `true` wird nach **jeder** passenden Zeile eingefügt.
+  - `ankerzeile`: Komplette Zeile, unter der eingefügt wird. Darf nicht leer sein.
+  - `neuezeile`: Die einzufügende Zeile als String oder ein Array / literal von Strings (mehrere Zeilen, in der Reihenfolge des Arrays). Die Zeilen werden unverändert eingefügt, ohne automatische Einrückung. Das Array darf nicht leer sein, alle Einträge müssen Strings sein.
 - **Rückgabe:**
-  Anzahl der eingefügten Zeilen als Zahl. `0` bedeutet: Suchtext nicht gefunden oder Eintrag bereits vorhanden (in diesem Fall wird die Datei nicht geschrieben).
-  `ErrorVal` bei leerem Suchtext, fehlenden Parametern oder Lese-/Schreibfehler.
-- **Prüfung auf vorhandenen Eintrag:**
-  Ohne `alle` wird die gesamte Datei geprüft: Steht die neue Zeile irgendwo schon, passiert nichts (der Aufruf ist wiederholbar).
-  Mit `alle` wird nur geprüft, ob die Zeile direkt unter der Fundzeile bereits der neue Eintrag ist.
+  Anzahl der tatsächlich eingefügten Zeilen als Zahl. `0` bedeutet: Alle Zeilen waren bereits vorhanden (die Datei wird dann nicht geschrieben).
+  `ErrorVal` bei nicht gefundener Ankerzeile, leerer Ankerzeile, leerem Array, falschem Typ von `neuezeile`, fehlenden Parametern oder Lese-/Schreibfehler.
 - **Hinweis:**
+  Die neuen Zeilen werden als zusammenhängender Block direkt am Anker eingefügt. Zeilen, die schon an anderer Stelle stehen, bleiben dort, die Reihenfolge im Ergebnis kann daher vom Array abweichen. Der Aufruf ist wiederholbar.
   Zeilenende-Stil (`\n` oder `\r\n`) und ein abschließender Zeilenumbruch bleiben erhalten.
-  Im Unterschied zu `file.InsertTextAfter` wird hier eine **ganze neue Zeile** eingefügt, nicht Text innerhalb einer Zeile.
+  Im Unterschied zu `file.InsertTextAfter` werden hier **ganze neue Zeilen** eingefügt, nicht Text innerhalb einer Zeile.
 
 ---
 
-## file.InsertLineBefore(pfad, ausgabepfad, suchtext, neuezeile, [alle])
+## file.InsertLineBefore(pfad, ausgabepfad, ankerzeile, neuezeile(n))
 - **Konkret:**
-  Fügt direkt oberhalb der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein.
-  Beim Vergleich werden führende Leerzeichen der Fundzeile ignoriert (`Port=` findet auch `  Port=8080`).
-  Gibt es die neue Zeile bereits, wird nichts eingefügt (Vergleich ohne führende/abschließende Leerzeichen).
+  Fügt direkt oberhalb der Ankerzeile eine oder mehrere neue Zeilen ein.
+  Die Ankerzeile muss einer Zeile der Datei **vollständig** entsprechen (Vergleich ohne führende/abschließende Leerzeichen, Groß-/Kleinschreibung wird beachtet). Gibt es mehrere passende Zeilen, zählt nur die erste.
+  Zeilen, die in der Datei bereits irgendwo vorkommen (Vergleich ohne führende/abschließende Leerzeichen), werden nicht doppelt eingefügt, die übrigen Zeilen werden trotzdem eingetragen. Dubletten innerhalb des Arrays werden ebenfalls entfernt.
   Ist der Ausgabepfad leer (`""`), wird die Originaldatei überschrieben, andernfalls in den Ausgabepfad geschrieben (Zielverzeichnis muss vorhanden sein).
 - **Parameter:**
   - `pfad`: Quelldatei.
   - `ausgabepfad`: Zieldatei, oder `""` um die Quelldatei zu überschreiben.
-  - `suchtext`: Anfang der Zeile, vor der eingefügt wird. Darf nicht leer sein.
-  - `neuezeile`: Die einzufügende Zeile (wird unverändert eingefügt, ohne automatische Einrückung).
-  - `alle` (optional, Standard `false`): Bei `true` wird vor **jeder** passenden Zeile eingefügt.
+  - `ankerzeile`: Komplette Zeile, über der eingefügt wird. Darf nicht leer sein.
+  - `neuezeile`: Die einzufügende Zeile als String oder ein Array von Strings (mehrere Zeilen, in der Reihenfolge des Arrays). Die Zeilen werden unverändert eingefügt, ohne automatische Einrückung. Das Array darf nicht leer sein, alle Einträge müssen Strings sein.
 - **Rückgabe:**
-  Anzahl der eingefügten Zeilen als Zahl. `0` bedeutet: Suchtext nicht gefunden oder Eintrag bereits vorhanden (in diesem Fall wird die Datei nicht geschrieben).
-  `ErrorVal` bei leerem Suchtext, fehlenden Parametern oder Lese-/Schreibfehler.
-- **Prüfung auf vorhandenen Eintrag:**
-  Ohne `alle` wird die gesamte Datei geprüft: Steht die neue Zeile irgendwo schon, passiert nichts (der Aufruf ist wiederholbar).
-  Mit `alle` wird nur geprüft, ob die Zeile direkt über der Fundzeile bereits der neue Eintrag ist.
+  Anzahl der tatsächlich eingefügten Zeilen als Zahl. `0` bedeutet: Alle Zeilen waren bereits vorhanden (die Datei wird dann nicht geschrieben).
+  `ErrorVal` bei nicht gefundener Ankerzeile, leerer Ankerzeile, leerem Array, falschem Typ von `neuezeile`, fehlenden Parametern oder Lese-/Schreibfehler.
 - **Hinweis:**
+  Die neuen Zeilen werden als zusammenhängender Block direkt am Anker eingefügt. Zeilen, die schon an anderer Stelle stehen, bleiben dort, die Reihenfolge im Ergebnis kann daher vom Array abweichen. Der Aufruf ist wiederholbar.
   Zeilenende-Stil (`\n` oder `\r\n`) und ein abschließender Zeilenumbruch bleiben erhalten.
 
 ---

@@ -1443,12 +1443,12 @@ func initFileFunctions() {
 		}
 	})
 
-	Register(ns+"InsertLineAfter", "file", "pfad, ausgabepfad, suchtext, neuezeile, [alle]",
-		"Fügt nach der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein, sofern es diese Zeile noch nicht gibt. Optional: nach allen passenden Zeilen. Gibt die Anzahl eingefügter Zeilen zurück (0 = nicht gefunden oder bereits vorhanden).",
+	Register(ns+"InsertLineAfter", "file", "pfad, ausgabepfad, ankerzeile, neuezeile(n)",
+		"Fügt direkt unter der ersten Zeile, die exakt der Ankerzeile entspricht, eine oder mehrere neue Zeilen (String oder Array) ein. Bereits vorhandene Zeilen werden nicht doppelt eingefügt. Gibt die Anzahl eingefügter Zeilen zurück (0 = alle bereits vorhanden). Ankerzeile nicht gefunden = Fehler.",
 		func(args []valpkg.Value) valpkg.Value { return insertLineRelative(args, false) })
 
-	Register(ns+"InsertLineBefore", "file", "pfad, ausgabepfad, suchtext, neuezeile, [alle]",
-		"Fügt vor der ersten Zeile, die mit dem Suchtext beginnt, eine neue Zeile ein, sofern es diese Zeile noch nicht gibt. Optional: vor allen passenden Zeilen. Gibt die Anzahl eingefügter Zeilen zurück (0 = nicht gefunden oder bereits vorhanden).",
+	Register(ns+"InsertLineBefore", "file", "pfad, ausgabepfad, ankerzeile, neuezeile(n)",
+		"Fügt direkt über der ersten Zeile, die exakt der Ankerzeile entspricht, eine oder mehrere neue Zeilen (String oder Array) ein. Bereits vorhandene Zeilen werden nicht doppelt eingefügt. Gibt die Anzahl eingefügter Zeilen zurück (0 = alle bereits vorhanden). Ankerzeile nicht gefunden = Fehler.",
 		func(args []valpkg.Value) valpkg.Value { return insertLineRelative(args, true) })
 
 	Register(ns+"InsertTextAfter", "file", "pfad, ausgabepfad, suchtext, einfügen", "Fügt in jeder Zeile nach der ersten Fundstelle des Suchtextes den angegebenen Text ein. Ist der Ausgabepfad leer, wird die Originaldatei überschrieben.", func(args []valpkg.Value) valpkg.Value {
@@ -2555,16 +2555,37 @@ func containsWholeWord(line, word string) bool {
 	}
 }
 
-// Gemeinsame Logik für InsertLineAfter / InsertLineBefore
+// missingLines liefert die Zeilen aus wanted, die in neighbors (getrimmt) noch nicht vorkommen.
+// Dubletten innerhalb von wanted werden ebenfalls entfernt.
+func missingLines(wanted, neighbors []string) []string {
+	seen := make(map[string]struct{}, len(neighbors)+len(wanted))
+	for _, n := range neighbors {
+		seen[strings.TrimSpace(n)] = struct{}{}
+	}
+	out := make([]string, 0, len(wanted))
+	for _, w := range wanted {
+		t := strings.TrimSpace(w)
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, w)
+	}
+	return out
+}
+
+// Gemeinsame Logik für InsertLineAfter / InsertLineBefore.
+// ankerzeile: komplette Zeile, exakter Vergleich (getrimmt), nur die erste Fundstelle zählt.
+// neuezeile darf ein String oder ein Array von Strings sein.
 func insertLineRelative(args []valpkg.Value, before bool) valpkg.Value {
 	name := "InsertLineAfter"
 	if before {
 		name = "InsertLineBefore"
 	}
-	sig := "file." + name + "(pfad, ausgabepfad, suchtext, neuezeile, [alle])"
+	sig := "file." + name + "(pfad, ausgabepfad, ankerzeile, neuezeile(n))"
 
 	if len(args) < 4 {
-		return valpkg.ErrorVal(name + " erwartet mindestens vier Parameter: Pfad, Ausgabepfad, Suchtext, Neue Zeile")
+		return valpkg.ErrorVal(name + " erwartet vier Parameter: Pfad, Ausgabepfad, Ankerzeile, Neue Zeile(n)")
 	}
 
 	pathStr, errS := expectStr(args, 0, sig)
@@ -2588,19 +2609,34 @@ func insertLineRelative(args []valpkg.Value, before bool) valpkg.Value {
 		}
 	}
 
-	searchText, errS := expectStr(args, 2, sig)
+	anchorStr, errS := expectStr(args, 2, sig)
 	if errS != nil {
 		return *errS
 	}
-	if searchText == "" {
-		return valpkg.ErrorVal(name + ": Der Suchtext darf nicht leer sein")
+	anchor := strings.TrimSpace(anchorStr)
+	if anchor == "" {
+		return valpkg.ErrorVal(name + ": Die Ankerzeile darf nicht leer sein")
 	}
 
-	newLine, errS := expectStr(args, 3, sig)
-	if errS != nil {
-		return *errS
+	// --- Neue Zeile(n): String oder Array von Strings ---
+	var newLines []string
+	switch args[3].Kind {
+	case valpkg.KindStr:
+		newLines = []string{args[3].Str}
+	case valpkg.KindArr:
+		for i, item := range args[3].Arr {
+			if item.Kind != valpkg.KindStr {
+				return valpkg.ErrorVal(fmt.Sprintf("%s: Eintrag %d in neuezeile muss ein String sein", name, i))
+			}
+			newLines = append(newLines, item.Str)
+		}
+	default:
+		return valpkg.ErrorVal(fmt.Sprintf("%s: neuezeile muss ein String oder Array sein, habe %s bekommen",
+			name, valpkg.GetKindName(args[3].Kind)))
 	}
-	all := len(args) > 4 && valpkg.ToBool(args[4])
+	if len(newLines) == 0 {
+		return valpkg.ErrorVal(name + ": neuezeile darf nicht leer sein")
+	}
 
 	// --- Lesen ---
 	file, err := openFileShared(path)
@@ -2620,49 +2656,46 @@ func insertLineRelative(args []valpkg.Value, before bool) valpkg.Value {
 	content = strings.TrimSuffix(content, "\n")
 	lines := strings.Split(content, "\n")
 
-	newTrim := strings.TrimSpace(newLine)
-
-	// --- Duplikat-Prüfung (Modus "erste Fundstelle"): Eintrag irgendwo vorhanden? ---
-	if !all {
-		for _, l := range lines {
-			if strings.TrimSpace(l) == newTrim {
-				return valpkg.NumVal(0) // existiert schon, nichts zu tun
-			}
+	// --- Anker suchen (erste exakte Übereinstimmung) ---
+	anchorIdx := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == anchor {
+			anchorIdx = i
+			break
 		}
+	}
+	if anchorIdx == -1 {
+		return valpkg.ErrorVal(name + ": Ankerzeile nicht gefunden: " + anchorStr)
+	}
+
+	// --- Duplikat-Prüfung: nur Zeilen einfügen, die noch nirgends in der Datei
+	// vorkommen (und innerhalb von neuezeile selbst nicht doppelt sind) ---
+	existing := make(map[string]struct{}, len(lines))
+	for _, l := range lines {
+		existing[strings.TrimSpace(l)] = struct{}{}
+	}
+	missing := make([]string, 0, len(newLines))
+	for _, nl := range newLines {
+		t := strings.TrimSpace(nl)
+		if _, ok := existing[t]; ok {
+			continue
+		}
+		existing[t] = struct{}{}
+		missing = append(missing, nl)
+	}
+	if len(missing) == 0 {
+		return valpkg.NumVal(0) // alles schon vorhanden, Datei bleibt unverändert
 	}
 
 	// --- Einfügen ---
-	result := make([]string, 0, len(lines)+1)
-	inserted := 0
-	for i, line := range lines {
-		isMatch := (all || inserted == 0) && strings.HasPrefix(strings.TrimSpace(line), searchText)
-
-		if before {
-			if isMatch {
-				// Im "alle"-Modus: nur einfügen, wenn die Zeile davor nicht schon der Eintrag ist
-				dup := all && len(result) > 0 && strings.TrimSpace(result[len(result)-1]) == newTrim
-				if !dup {
-					result = append(result, newLine)
-					inserted++
-				}
-			}
-			result = append(result, line)
-		} else {
-			result = append(result, line)
-			if isMatch {
-				// Im "alle"-Modus: nur einfügen, wenn die Zeile danach nicht schon der Eintrag ist
-				dup := all && i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == newTrim
-				if !dup {
-					result = append(result, newLine)
-					inserted++
-				}
-			}
-		}
+	insertAt := anchorIdx + 1
+	if before {
+		insertAt = anchorIdx
 	}
-
-	if inserted == 0 {
-		return valpkg.NumVal(0)
-	}
+	result := make([]string, 0, len(lines)+len(missing))
+	result = append(result, lines[:insertAt]...)
+	result = append(result, missing...)
+	result = append(result, lines[insertAt:]...)
 
 	eol := "\n"
 	if isCRLF {
@@ -2676,5 +2709,5 @@ func insertLineRelative(args []valpkg.Value, before bool) valpkg.Value {
 	if err := os.WriteFile(outputPath, []byte(output), 0644); err != nil {
 		return valpkg.ErrorVal("Fehler beim Schreiben der Datei: " + err.Error())
 	}
-	return valpkg.NumVal(float64(inserted))
+	return valpkg.NumVal(float64(len(missing)))
 }
