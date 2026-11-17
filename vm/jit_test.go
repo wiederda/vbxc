@@ -83,6 +83,46 @@ Print a = b
 Print a = "x"
 Print a <> "x"
 `,
+	"string-konstanten": `
+Println "Hallo von der String-Konstante"
+Println "hallo welt abcdef" = "hallo welt abcdef"
+Println "hallo welt abcdef" = "hallo welt abcdeg"
+Println "" = ""
+Dim i
+Dim n
+n = 0
+For i = 1 To 50
+    If "gleich" = "gleich" Then
+        n = n + 1
+    End If
+    If "gleich" <> "anders" Then
+        n = n + 1
+    End If
+Next
+Println n
+`,
+	"string-konkatenation": `
+Println ("a" & "b") = "ab"
+Println ("" & "") = ""
+Println ("a" & "") = "a"
+Println ("" & "a") = "a"
+Println (("a" & "b") & ("c" & "d")) = "abcd"
+Println ("äöü" & "ß") = "äöüß"
+Println ("x" & 1) = "x1"
+Println (1 & "x") = "1x"
+Println ("x" & True) = "xtrue"
+Println ("x" & False) = "xfalse"
+Println ("Dies ist ein laengerer linker Teil der Konkatenation." & " Und hier folgt der rechte Teil mit Umlauten äöü.") = "Dies ist ein laengerer linker Teil der Konkatenation. Und hier folgt der rechte Teil mit Umlauten äöü."
+Dim i
+Dim n
+n = 0
+For i = 1 To 100
+    If (("ab" & "cd") = "abcd") And (("" & "x") = "x") Then
+        n = n + 1
+    End If
+Next
+Println n
+`,
 	"pfade": `
 Dim j
 j = 0

@@ -245,9 +245,13 @@ Entstehen z. B. über `json.FromJSON` oder `map.Create`. Lesender Zugriff über 
 
 ## Print & Farben
 
+`Print` gibt den Wert ohne Zeilenumbruch aus. `Println` verhält sich genauso,
+hängt aber automatisch einen Zeilenumbruch am Ende an.
+
 ```vbx
-Print "Wert: " & x
-Print vbRed() & "Fehler" & vbNormal()
+Print "Hallo"
+Println " Welt"   ' ergibt "Hallo Welt" und beendet die Zeile
+Println vbRed() & "Fehler" & vbNormal()
 ```
 
 ---
@@ -278,7 +282,7 @@ Folgende Wörter sind reserviert und können nicht als Namen für Variablen, Fun
 | Fallunterscheidung | `Select`, `Case`, `Is` |
 | Fehlerbehandlung | `Try`, `Catch`, `Finally` |
 | Logik | `And`, `Or`, `Not`, `True`, `False`, `Nothing` |
-| Sonstiges | `Print`, `End`, `Include` |
+| Sonstiges | `Print`, `Println`, `End`, `Include` |
 
 ---
 
@@ -298,7 +302,8 @@ Folgende Wörter sind reserviert und können nicht als Namen für Variablen, Fun
 | **Sub**         | `Sub Name(param1, param2 [, Optional param3 = wert])`                                 | `End Sub`                |
 | **Function**    | `Function Name(...)` … `Return wert` oder `Name = wert`                               | `End Function`           |
 | **Cls**         | `Cls()`                                                                               | –                        |
-| **Print**       | `Print wert`                                                                          | –                        |
+| **Print**       | `Print wert` (ohne Zeilenumbruch)                                                     | –                        |
+| **Println**     | `Println wert` (Zeilenumbruch am Ende)                                                | –                        |
 
 **For Each:** Mit einer Variable (`For Each v In …`) liefert ein 1D-Array die Elemente, ein 2D-Array die Zeilen (jeweils als 1D-Array), eine Map die Werte. Mit zwei Variablen (`For Each k, v In …`) liefern Arrays Index und Element, Maps Schlüssel und Wert. Maps werden nach Schlüssel sortiert durchlaufen.
 

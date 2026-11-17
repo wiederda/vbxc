@@ -12,5 +12,13 @@ pic
 *.xml
 builds_count.sh
 build_info.html
-VBXC_Architekturkonzept_VBXUI.md
-VBXC_Architekturkonzept.md
+Fehler.txt
+CHANGES.md
+DESIGN.md
+FINAL_REPORT.md
+JIT_ROADMAP.md
+VBX_IDE_Architektur.md
+VBX_Portierung_Rust.md
+T_ROADMAP.md
+CHANGES.md
+FINAL_REPORT.md

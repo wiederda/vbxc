@@ -266,6 +266,23 @@ func (a *asm) leaRM(dst, base int, disp int32) {
 	a.modrmMem(dst, base, disp)
 }
 
+// leaRIP: dst <- Adresse des Labels (RIP-relativ). Der Label-Punkt kann
+// auch in eingebetteten Daten liegen; das Displacement ist wie bei einem
+// Sprung relativ zum Ende des 4-Byte-Feldes.
+func (a *asm) leaRIP(dst, label int) {
+	a.rex(true, dst, 0, 5)
+	a.emit(0x8D)
+	a.buf = append(a.buf, byte(dst&7)<<3|5) // mod=00, rm=101 (RIP+disp32)
+	a.fix(label)
+}
+
+// repMovsb kopiert RCX Bytes von [RSI] nach [RDI]. CLD setzt die Richtung
+// explizit auf vorwärts (die Go-ABI verlangt DF=0, der Fremdcode soll sich
+// aber nicht darauf verlassen müssen).
+func (a *asm) repMovsb() {
+	a.emit(0xFC, 0xF3, 0xA4)
+}
+
 // ---------------- Rechnen / Vergleichen ----------------
 
 func (a *asm) addRR(dst, src int) {

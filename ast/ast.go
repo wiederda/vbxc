@@ -162,8 +162,9 @@ type PublicArrayNode struct {
 
 type PrintNode struct {
 	Loc
-	Value Expr
-	Color Expr // nil, wenn keine Farbe angegeben
+	Value   Expr
+	Color   Expr // nil, wenn keine Farbe angegeben
+	Newline bool // true bei Println: Zeilenumbruch am Ende
 }
 
 type IfBranch struct {

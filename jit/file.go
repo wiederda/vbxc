@@ -29,11 +29,13 @@ import (
 
 // Magic und Version der Maschinencode-Datei. Version 3 speichert die nötigen
 // CPU-Features, damit AVX/FMA- und SSE4.1-Code nicht auf einer inkompatiblen
-// amd64-CPU ausgeführt wird. Ältere Versionen werden abgelehnt und müssen mit
+// amd64-CPU ausgeführt wird. Version 4 erweitert den ctx um das String-Arena
+// für natives CONCAT; ältere Laufzeiten würden die neuen Offsets nicht
+// bedienen. Ältere Versionen werden abgelehnt und müssen mit
 // 'vbxc build windows|linux' neu erzeugt werden.
 const (
 	machineFileMagic   = "VBXM"
-	machineFileVersion = 3
+	machineFileVersion = 4
 )
 
 const (

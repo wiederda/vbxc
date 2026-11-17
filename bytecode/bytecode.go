@@ -91,7 +91,7 @@ const (
 	OpCaseIs         // A = Operator; [wert, vergleichswert] -> Bool
 
 	// Ein-/Ausgabe
-	OpPrint // A = 1 wenn Farbe oben auf dem Stack liegt
+	OpPrint // A = 1 wenn Farbe oben auf dem Stack liegt, B = 1 wenn Zeilenumbruch
 	OpCls
 
 	// Sub/Function

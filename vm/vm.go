@@ -639,22 +639,26 @@ func (vm *VM) exec(c *bytecode.Chunk, code []bytecode.Instr, pos []bytecode.Pos,
 		case bytecode.OpPrint:
 			var color value.Value
 			hasColor := in.A == 1
+			lineEnd := ""
+			if in.B == 1 {
+				lineEnd = "\n"
+			}
 			if hasColor {
 				color = vm.pop()
 			}
 			out := value.ToString(vm.pop())
 			if hasColor {
 				if color.Kind == value.KindStr {
-					fmt.Fprintf(vm.Out, "%s%s\033[0m\n", color.Str, out)
+					fmt.Fprintf(vm.Out, "%s%s\033[0m%s", color.Str, out, lineEnd)
 					continue
 				}
 				if color.Kind == value.KindNum {
 					cn := int(color.Num)
-					fmt.Fprintf(vm.Out, "\033[%dm%s\033[0m\n", 30+(cn%10), out)
+					fmt.Fprintf(vm.Out, "\033[%dm%s\033[0m%s", 30+(cn%10), out, lineEnd)
 					continue
 				}
 			}
-			fmt.Fprint(vm.Out, out+"\033[0m\n")
+			fmt.Fprint(vm.Out, out+"\033[0m"+lineEnd)
 
 		case bytecode.OpCls:
 			clearScreen()

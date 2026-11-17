@@ -223,7 +223,7 @@ func supported(chunk *bytecode.Chunk, in bytecode.Instr) bool {
 			return false
 		}
 		switch chunk.Consts[in.A].Kind {
-		case value.KindNum, value.KindBool, value.KindNull:
+		case value.KindNum, value.KindBool, value.KindNull, value.KindStr:
 			return true
 		}
 		return false
@@ -328,6 +328,7 @@ func supported(chunk *bytecode.Chunk, in bytecode.Instr) bool {
 	case bytecode.OpNull, bytecode.OpTrue, bytecode.OpFalse,
 		bytecode.OpPop,
 		bytecode.OpAdd, bytecode.OpSub, bytecode.OpMul, bytecode.OpDiv,
+		bytecode.OpConcat,
 		bytecode.OpEq, bytecode.OpNeq, bytecode.OpLt, bytecode.OpGt,
 		bytecode.OpLe, bytecode.OpGe,
 		bytecode.OpNot, bytecode.OpNeg, bytecode.OpTruthy,
@@ -462,7 +463,7 @@ func minDepth(in bytecode.Instr) int32 {
 	case bytecode.OpCaseRange:
 		return 3
 	case bytecode.OpAdd, bytecode.OpSub, bytecode.OpMul, bytecode.OpDiv,
-		bytecode.OpCalc, bytecode.OpEq, bytecode.OpNeq, bytecode.OpLt,
+		bytecode.OpConcat, bytecode.OpCalc, bytecode.OpEq, bytecode.OpNeq, bytecode.OpLt,
 		bytecode.OpGt, bytecode.OpLe, bytecode.OpGe,
 		bytecode.OpForInit, bytecode.OpForTest, bytecode.OpForStep:
 		return 2

@@ -78,6 +78,30 @@ Print "text " & (7 < 8)
 	}
 }
 
+// TestPrintUndPrintln: Print schreibt ohne Zeilenumbruch, Println hängt
+// automatisch einen an.
+func TestPrintUndPrintln(t *testing.T) {
+	chunk := kompiliere(t, `
+Print "a"
+Print "b"
+Println "c"
+Println "d"
+Println
+`)
+
+	var out bytes.Buffer
+	v := New()
+	v.Out = &out
+	if err := v.Run(chunk); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := "a\033[0mb\033[0mc\033[0m\nd\033[0m\n\033[0m\n"
+	if out.String() != want {
+		t.Errorf("Ausgabe = %q, erwartet %q", out.String(), want)
+	}
+}
+
 // fmtChunkCode gibt die Instruktionen des Chunks (Hauptprogramm + Funcs)
 // als vergleichbare Zeichenkette zurück.
 func fmtChunkCode(c *bytecode.Chunk) string {

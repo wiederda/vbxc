@@ -1,10 +1,12 @@
 //go:build amd64
 
 // Codegenerator: erzeugt aus kompilierten Bytecode-Regionen x86-64-Maschinen-
-// code. Die Instruktionen sind so gewählt, dass sie niemals einen lebenden
-// Go-Zeiger schreiben (nur Kind/Num/Bool bzw. NULL in den Zeigerfeldern) -
-// dadurch braucht der Code keine Write-Barrier. Nicht unterstützte Werte und
-// Aufrufe deopten in die VM; einfache numerische math.*-Aufrufe (Abs, Sign,
+// code. Die Instruktionen schreiben nur Zeiger auf stabile, über das Programm
+// erreichbare Ziele - dadurch braucht der Code keine Write-Barrier. String-
+// Konstanten werden als Bytes hinter den Code gelegt und RIP-relativ
+// adressiert; native CONCAT-Ergebnisse kopieren in ein monotones String-Arena
+// im Programm. Nicht unterstützte Werte und Aufrufe deopten in die VM;
+// einfache numerische math.*-Aufrufe (Abs, Sign,
 // Sqrt, Min, Max, Mod, Clamp, Floor, Ceil, Trunc, Int, DegToRad, RadToDeg,
 // Percent, PercentOf, Round, RoundBank, Pi(), E(), IsArray, IsMap, IsString,
 // IsNull und IsNothing) sind spezialisiert. Round
@@ -63,11 +65,14 @@ const (
 	kUndef = int32(value.KindUndefined)
 
 	// ctx-Felder als int32 (die Encoder arbeiten mit int32-Displacements).
-	ctxStack  = int32(offCtxStack)
-	ctxBase   = int32(offCtxBase)
-	ctxDepth  = int32(offCtxDepth)
-	ctxBudget = int32(offCtxBudget)
-	ctxVars   = int32(offCtxVars)
+	ctxStack    = int32(offCtxStack)
+	ctxBase     = int32(offCtxBase)
+	ctxDepth    = int32(offCtxDepth)
+	ctxBudget   = int32(offCtxBudget)
+	ctxVars     = int32(offCtxVars)
+	ctxArena    = int32(offCtxArena)
+	ctxArenaCap = int32(offCtxArenaCap)
+	ctxArenaOff = int32(offCtxArenaOff)
 )
 
 // fSignMask dient dem negativen Vorzeichen: XOR mit dem oberen Bit kehrt das
@@ -125,6 +130,7 @@ func compile(p *Program, chunk *bytecode.Chunk) error {
 	}
 
 	a := newAsm()
+	strs := &strPool{labels: make(map[int32]int)}
 	var stubs []stubbed
 
 	for _, j := range jobs {
@@ -135,6 +141,7 @@ func compile(p *Program, chunk *bytecode.Chunk) error {
 			r:       j.r,
 			body:    make(map[int32]int, j.r.end-j.r.start),
 			slotIdx: make(map[slotDef]int, len(j.r.slots)),
+			strs:    strs,
 		}
 		for i, sd := range j.r.slots {
 			g.slotIdx[sd] = i
@@ -159,6 +166,7 @@ func compile(p *Program, chunk *bytecode.Chunk) error {
 				local:  local,
 				slots:  make([]varSlot, len(j.r.slots)),
 				budget: p.budget,
+				arena:  p.arena,
 				code:   j.ci.code,
 			}
 			stub := a.label()
@@ -166,6 +174,14 @@ func compile(p *Program, chunk *bytecode.Chunk) error {
 			stubs = append(stubs, stubbed{e, stub, j.key, j.arrayIndex})
 		}
 		g.emitBody()
+	}
+
+	// String-Konstanten als Bytes hinter den Code legen. Die Instruktionen
+	// adressieren sie RIP-relativ; dadurch bleibt der Block verschiebbar und
+	// braucht weder Relocations noch Go-Heap-Zeiger.
+	for _, idx := range strs.order {
+		a.mark(strs.labels[idx])
+		a.buf = append(a.buf, chunk.Consts[idx].Str...)
 	}
 
 	a.finish()
@@ -203,6 +219,25 @@ type cg struct {
 	body    map[int32]int
 	epi     int
 	slotIdx map[slotDef]int
+	strs    *strPool
+}
+
+// strPool sammelt die im Maschinencode verwendeten String-Konstanten. Die
+// Reihenfolge ist die Reihenfolge des Auftretens im Code, damit der erzeugte
+// Block reproduzierbar bleibt.
+type strPool struct {
+	labels map[int32]int
+	order  []int32
+}
+
+func (sp *strPool) label(a *asm, idx int32) int {
+	if lbl, ok := sp.labels[idx]; ok {
+		return lbl
+	}
+	lbl := a.label()
+	sp.labels[idx] = lbl
+	sp.order = append(sp.order, idx)
+	return lbl
 }
 
 // ---------------------------------------------------------------- Hülfen
@@ -277,6 +312,11 @@ func (g *cg) wBoolImm(rel, v int32) {
 	g.a.movMI(r13, rel*slotBytes+offBool, v) // 8 Bytes: Bool + Padding
 }
 func (g *cg) wBoolReg(rel int32, r int) { g.a.movMR(r13, rel*slotBytes+offBool, r) }
+func (g *cg) wStrPtr(rel int32, r int)  { g.a.movMR(r13, rel*slotBytes+offStrPtr, r) }
+func (g *cg) wStrLen(rel, n int32)      { g.a.movMI(r13, rel*slotBytes+offStrLen, n) }
+func (g *cg) wStrLenReg(rel int32, r int) {
+	g.a.movMR(r13, rel*slotBytes+offStrLen, r)
+}
 
 // slotIdxOf liefert den Tabellenindex einer Variablen der Region. Die Menge
 // der Namen stammt aus derselben Opcode-Menge wie in collectSlots - ein
@@ -302,6 +342,13 @@ func (g *cg) cellAndFlags(idx int) {
 func (g *cg) guardNum(rel int32, deopt int) {
 	g.a.movRM(rax, r13, rel*slotBytes)
 	g.a.cmpRI(rax, kNum)
+	g.a.jcc(ccNE, deopt)
+}
+
+// guardStr: Kind == KindStr am Slot, sonst Deopt.
+func (g *cg) guardStr(rel int32, deopt int) {
+	g.a.movRM(rax, r13, rel*slotBytes)
+	g.a.cmpRI(rax, kStr)
 	g.a.jcc(ccNE, deopt)
 }
 
@@ -433,6 +480,11 @@ func (g *cg) emitOp(i int) {
 				} else {
 					g.wBoolImm(d, 0)
 				}
+			case value.KindStr:
+				g.wKind(d, kStr)
+				g.a.leaRIP(rax, g.strs.label(g.a, in.A))
+				g.wStrPtr(d, rax)
+				g.wStrLen(d, int32(len(cv.Str)))
 			default:
 				g.wKind(d, kNull)
 			}
@@ -1357,6 +1409,52 @@ func (g *cg) emitOp(i int) {
 		g.pushPrologue(d - 2)
 		g.wKind(d-2, kNum)
 		g.wNumX(d-2, 0)
+		g.fall(i, d-1)
+
+	// ---------- String-Konkatenation ----------
+	case bytecode.OpConcat:
+		// Nur Str & Str läuft nativ. Andere Kinds (auch Fehler) deopten vor
+		// jeder Stack-Veränderung in die VM, die ToString-/Fehler-Semantik
+		// unverändert ausführt.
+		g.guardStr(d-2, dep)
+		g.guardStr(d-1, dep)
+
+		// total = len(l) + len(r) in RDX; off in RSI.
+		g.a.movRM(rdx, r13, (d-2)*sz+offStrLen)
+		g.a.movRM(rax, r13, (d-1)*sz+offStrLen)
+		g.a.addRR(rdx, rax)
+		g.a.movRM(rsi, rbx, ctxArenaOff)
+		g.a.movRM(rdi, rbx, ctxArenaCap)
+		g.a.movRR(rcx, rsi)
+		g.a.addRR(rcx, rdx) // RCX = Ende des neuen Strings
+		// Bewusst >= cap: so bleibt immer ein gültiges Byte für leere
+		// Ergebnisse übrig (kein Zeiger genau hinter das Arena-Ende).
+		g.a.cmpRR(rcx, rdi)
+		g.a.jcc(ccAE, dep) // kein Platz -> VM
+
+		// Zielzeiger = arena + off; RAX behält ihn über die Kopien.
+		g.a.movRM(rax, rbx, ctxArena)
+		g.a.addRR(rax, rsi)
+		g.a.movRR(rdi, rax)
+
+		g.a.movRM(rsi, r13, (d-2)*sz+offStrPtr)
+		g.a.movRM(rcx, r13, (d-2)*sz+offStrLen)
+		g.a.repMovsb()
+
+		g.a.movRM(rsi, r13, (d-1)*sz+offStrPtr)
+		g.a.movRM(rcx, r13, (d-1)*sz+offStrLen)
+		g.a.repMovsb()
+
+		g.pushPrologue(d - 2)
+		g.wKind(d-2, kStr)
+		g.wStrPtr(d-2, rax)
+		g.wStrLenReg(d-2, rdx)
+
+		// Arena-Offset sofort zurückschreiben: ein späterer Deopt darf die
+		// bereits erzeugten Strings nicht überschreiben.
+		g.a.movRM(rcx, rbx, ctxArenaOff)
+		g.a.addRR(rcx, rdx)
+		g.a.movMR(rbx, ctxArenaOff, rcx)
 		g.fall(i, d-1)
 
 	// ---------- Vergleichen ----------

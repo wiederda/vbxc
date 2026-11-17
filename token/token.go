@@ -72,6 +72,7 @@ const (
 	CATCH
 	FINALLY
 	NOTHING
+	PRINTLN
 )
 
 // Token trägt jetzt zusätzlich die Zeile, in der es steht (neu gegenüber
@@ -152,6 +153,7 @@ var names = [...]string{
 	CATCH:        "CATCH",
 	FINALLY:      "FINALLY",
 	NOTHING:      "NOTHING",
+	PRINTLN:      "PRINTLN",
 }
 
 func (t Type) String() string {
@@ -165,6 +167,7 @@ var Keywords = map[string]Type{
 	"dim":      DIM,
 	"public":   PUBLIC,
 	"print":    PRINT,
+	"println":  PRINTLN,
 	"if":       IF,
 	"then":     THEN,
 	"else":     ELSE,

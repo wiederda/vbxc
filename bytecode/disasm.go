@@ -134,6 +134,10 @@ func disasmUnit(w io.Writer, c *Chunk, title string, code []Instr, posTab []Pos)
 		if !ok {
 			m = opMeta{in.Op.String(), "---"}
 		}
+		name := m.name
+		if in.Op == OpPrint && in.B == 1 {
+			name = "PRINTLN"
+		}
 
 		pos := posTab[i]
 		lineCol := "   |"
@@ -142,7 +146,7 @@ func disasmUnit(w io.Writer, c *Chunk, title string, code []Instr, posTab []Pos)
 			lastLine, lastFile = pos.Line, pos.File
 		}
 
-		fmt.Fprintf(w, "%04d %s  %-10s", i, lineCol, m.name)
+		fmt.Fprintf(w, "%04d %s  %-10s", i, lineCol, name)
 
 		ops := [3]int32{in.A, in.B, in.C}
 		for k := 0; k < 3; k++ {

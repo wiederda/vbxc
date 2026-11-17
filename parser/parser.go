@@ -792,16 +792,21 @@ func (p *Parser) parseStmt() ast.Stmt {
 		}
 		return &ast.MultiStmtNode{Loc: p.at(line), Stmts: stmts}
 
-	case PRINT:
-		p.next() // 'Print'
+	case PRINT, PRINTLN:
+		kw := p.next() // 'Print' oder 'Println'
+		newline := kw.Type == PRINTLN
 
-		// Print ohne Argument -> Leerzeile
+		// Print/Println ohne Argument -> leere Ausgabe
 		switch p.peek().Type {
 		case NEWLINE, EOF, COMMENT:
-			return &ast.PrintNode{Loc: p.at(line), Value: &ast.StringNode{Loc: p.at(line), Value: ""}}
+			return &ast.PrintNode{
+				Loc:     p.at(line),
+				Value:   &ast.StringNode{Loc: p.at(line), Value: ""},
+				Newline: newline,
+			}
 		}
 
-		node := &ast.PrintNode{Loc: p.at(line), Value: p.parseExpr()}
+		node := &ast.PrintNode{Loc: p.at(line), Value: p.parseExpr(), Newline: newline}
 
 		if p.peek().Type == COMMA {
 			p.next()

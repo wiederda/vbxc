@@ -831,6 +831,10 @@ func evalSingleStatement(s Stmt, env *Environment) (Value, Signal) {
 		}
 
 		outputStr := ToString(val)
+		lineEnd := ""
+		if n.Newline {
+			lineEnd = "\n"
+		}
 
 		// --- LOGGING ---
 		// Solange ein debug-Log offen ist, landet die Print-Ausgabe dort
@@ -847,18 +851,18 @@ func evalSingleStatement(s Stmt, env *Environment) (Value, Signal) {
 		if n.Color != nil {
 			colorVal := evalExpr(n.Color, env)
 			if colorVal.Kind == KindStr {
-				fmt.Printf("%s%s\033[0m\n", colorVal.Str, outputStr)
+				fmt.Printf("%s%s\033[0m%s", colorVal.Str, outputStr, lineEnd)
 				return NullVal(), SignalNone
 			}
 			if colorVal.Kind == KindNum {
 				c := int(colorVal.Num)
-				fmt.Printf("\033[%dm%s\033[0m\n", 30+(c%10), outputStr)
+				fmt.Printf("\033[%dm%s\033[0m%s", 30+(c%10), outputStr, lineEnd)
 				return NullVal(), SignalNone
 			}
 		}
 
 		// Standardfall: Text (evtl. mit Inline-ANSI) + Reset
-		fmt.Print(outputStr + "\033[0m\n")
+		fmt.Print(outputStr + "\033[0m" + lineEnd)
 		return NullVal(), SignalNone
 
 	case *WhileNode:

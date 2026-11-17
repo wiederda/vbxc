@@ -421,7 +421,11 @@ func (c *compiler) stmt(s ast.Stmt) {
 			c.expr(n.Color)
 			hasColor = 1
 		}
-		c.emit(loc, bytecode.OpPrint, hasColor)
+		newline := int32(0)
+		if n.Newline {
+			newline = 1
+		}
+		c.emit(loc, bytecode.OpPrint, hasColor, newline)
 
 	case *ast.CallNode:
 		if strings.EqualFold(n.Name, "Cls") {

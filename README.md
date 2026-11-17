@@ -150,12 +150,12 @@ Maschinencode-Datei ist an das beim Build gewählte Betriebssystem gebunden.
 
 **Sicherheitsmodell:**
 
-* der Maschinencode schreibt **nie** einen lebenden Go-Zeiger in den Speicher (kein Write-Barrier-Problem für die GC) – direkt geschrieben werden nur `Kind`, `Num` und `Bool`, sowie Null (`Kind = 7`)
-* Werte mit Zeigern (Strings, Arrays, Objekte, Maps, Fehler, Nil) laufen über einen **Deopt-Wächter**: erkennt der Code einen solchen Wert, kehrt er *vor* der Ausführung in die Interpretation zurück – exakt dieselbe Behandlung wie ohne JIT
+* der Maschinencode schreibt nur Zeiger auf Speicher, der für die gesamte Programmlaufzeit stabil und über das Programm erreichbar ist – dadurch entstehen keine Write-Barrier- oder Verschiebeprobleme. Das sind String-Konstanten (Bytes im ausführbaren Block) und native `&`-Ergebnisse (Bytes im monotonen String-Arena des Programms); alles andere wird nur als `Kind`, `Num` und `Bool` bzw. Null (`Kind = 7`) geschrieben
+* dynamische Werte mit Zeigern (Strings aus Variablen/Funktionen, Arrays, Objekte, Maps, Fehler, Nil) laufen über einen **Deopt-Wächter**: erkennt der Code einen solchen Wert, kehrt er *vor* der Ausführung in die Interpretation zurück – exakt dieselbe Behandlung wie ohne JIT
 * Vergleiche mit NaN, unbekannte Variablen, Konstanten-Verletzungen und alles nicht Übersetzbare deopten ebenfalls
 * **Budget-Safepoints** an Rückwärtssprüngen: da Maschinencode nicht von Go vorzeitig unterbrochen werden kann, geben Safepoints die Kontrolle an die VM zurück, die die Schleife fortsetzt
 
-**Was übersetzt wird:** zusammenhängende Bytecode-Regionen mit numerischen Operationen sowie `math.Abs`, `math.Sign`, `math.Sqrt`, `math.Min`, `math.Max`, `math.Mod`, `math.Floor`, `math.Ceil`, `math.Trunc` und `math.Int` bei numerischen Argumenten. `For Each`-Schleifen laufen nativ, wenn das iterierbare Objekt ein eindimensionales Array ist und die Schleifenvariablen existieren; Elemente der Kinds Num/Bool/Null werden direkt geschrieben, Strings/2D/Maps deoptieren pro Fall in die VM. Allgemeine Funktionsaufrufe, übrige Array-/Map-Operationen und nicht unterstützte Laufzeitwerte laufen über die VM. Der Wechsel erfolgt automatisch; die VM bleibt der Rückfallpfad. Auf Nicht-x86-64-Plattformen (`GOARCH` ungleich `amd64`) wird gar nichts übersetzt.
+**Was übersetzt wird:** zusammenhängende Bytecode-Regionen mit numerischen Operationen, String-Konstanten sowie `&` für String + String (gemischte Typen und ein volles String-Arena deoptieren pro Fall in die VM). Dazu `math.Abs`, `math.Sign`, `math.Sqrt`, `math.Min`, `math.Max`, `math.Mod`, `math.Floor`, `math.Ceil`, `math.Trunc` und `math.Int` bei numerischen Argumenten. `For Each`-Schleifen laufen nativ, wenn das iterierbare Objekt ein eindimensionales Array ist und die Schleifenvariablen existieren; Elemente der Kinds Num/Bool/Null werden direkt geschrieben, Strings/2D/Maps deoptieren pro Fall in die VM. Allgemeine Funktionsaufrufe, übrige Array-/Map-Operationen und nicht unterstützte Laufzeitwerte laufen über die VM. Der Wechsel erfolgt automatisch; die VM bleibt der Rückfallpfad. Auf Nicht-x86-64-Plattformen (`GOARCH` ungleich `amd64`) wird gar nichts übersetzt.
 
 **Schalten:**
 
@@ -621,20 +621,24 @@ Next
 
 ---
 
-# Print
+# Print & Println
+
+`Print` gibt den Wert ohne Zeilenumbruch aus. `Println` verhält sich genauso,
+hängt aber automatisch einen Zeilenumbruch am Ende an.
 
 ```vbx
-Print "Hallo Welt"
+Print "Hallo"
+Println " Welt"   ' ergibt "Hallo Welt" und beendet die Zeile
 Print x
-Print "Wert: " & x
+Println "Wert: " & x
 ```
 
 ## Farben
 
 ```vbx
-Print vbRed() & "Fehler" & vbNormal()
-Print vbGreen() & "OK" & vbNormal()
-Print vbBold() & vbYellow() & "Wichtig" & vbNormal()
+Println vbRed() & "Fehler" & vbNormal()
+Println vbGreen() & "OK" & vbNormal()
+Println vbBold() & vbYellow() & "Wichtig" & vbNormal()
 ```
 
 ---
@@ -709,7 +713,7 @@ Folgende Wörter sind reserviert und können nicht als Namen für Variablen, Fun
 | Fallunterscheidung | `Select`, `Case`, `Is` |
 | Fehlerbehandlung | `Try`, `Catch`, `Finally` |
 | Logik | `And`, `Or`, `Not`, `True`, `False`, `Nothing` |
-| Sonstiges | `Print`, `End`, `Include` |
+| Sonstiges | `Print`, `Println`, `End`, `Include` |
 
 ---
 
@@ -729,7 +733,8 @@ Folgende Wörter sind reserviert und können nicht als Namen für Variablen, Fun
 | Sub         | `Sub Name(param1, param2 [, Optional param3 = wert])` | `End Sub` |
 | Function    | `Function Name(param1, param2 [, Optional param3 = wert])` … `Return wert` oder `Name = wert` | `End Function` |
 | Cls         | `Cls()` | – |
-| Print       | `Print wert` | – |
+| Print       | `Print wert` (ohne Zeilenumbruch) | – |
+| Println     | `Println wert` (Zeilenumbruch am Ende) | – |
 
 **For Each:** Mit einer Variable (`For Each v In …`) liefert ein 1D-Array die Elemente, ein 2D-Array die Zeilen (jeweils als 1D-Array), eine Map die Werte. Mit zwei Variablen (`For Each k, v In …`) liefern Arrays Index und Element, Maps Schlüssel und Wert. Maps werden nach Schlüssel sortiert durchlaufen.
 

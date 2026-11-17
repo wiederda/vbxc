@@ -19,13 +19,16 @@ import (
 
 // canarySrc: bewusst breite Deckung der nativen Opgattungen - Variablenzellen,
 // Arithmetik, Vergleiche (auch OpEq/OpNeq), Boolesche Logik, Verzweigungen
-// und For-Schleifen, 1D-/2D-Array-Guards, Aufrufe der spezialisierten
-// math.*-Builtins. Nicht abgedeckte Codegen-Änderungen invalidieren den Cache
-// über die Versionkonstanten (cacheVersion/machineFileVersion in jit.go und
-// file.go), die bei absichtlichen Generierungsänderungen mit angehoben werden.
+// und For-Schleifen, String-Konstanten und String-Konkatenation, 1D-/2D-Array-
+// Guards, Aufrufe der spezialisierten math.*-Builtins. Nicht abgedeckte
+// Codegen-Änderungen invalidieren den Cache über die Versionkonstanten
+// (cacheVersion/machineFileVersion in jit.go und file.go), die bei
+// absichtlichen Generierungsänderungen mit angehoben werden.
 const canarySrc = `
 Dim a = 7
 Dim b = -3.5
+Dim t = "jit-canary"
+Dim u = "jit-" & "canary"
 Dim s = a * 3 + b / 7
 If a > b And s <= 21 Or Not (a = 0) Then
     s = s + 25

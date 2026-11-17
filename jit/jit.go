@@ -7,11 +7,16 @@
 //   - Der generierte Code ruft niemals Go-Funktionen auf (kein cgo, kein
 //     Trampoline). Fehlerfälle kehren mit einer Resume-IP zurück; die VM
 //     führt den Opcode dann interpretiert aus. Semantik identisch.
-//   - Maschinencode schreibt NIEMALS einen lebenden Go-Zeiger in den
-//     Speicher. Er manipuliert nur Kind (int), Num (float64) und Bool sowie
-//     NULL-Werte in den Zeigerfeldern - das ist ein "Drop", für den keine
-//     Write-Barrier nötig ist. Werte mit Zeigern (Strings, Arrays, ...)
-//     verlassen den JIT über einen Deopt-Guard in die Interpretation.
+//   - Maschinencode schreibt nur Zeiger auf Speicher, der für die gesamte
+//     Programmlaufzeit stabil und über das Programm erreichbar ist. Er
+//     manipuliert Kind (int), Num (float64) und Bool sowie NULL-Werte in den
+//     Zeigerfeldern. String-Konstanten liegen zusammen mit dem Code im
+//     ausführbaren Block; native CONCAT-Ergebnisse zeigen in ein monotones
+//     String-Arena, das das Programm offen hält. Beide Ziele sind nicht
+//     bewegbar und für die GC über das Programm erreichbar - es entsteht
+//     kein Write-Barrier-Problem. Dynamische Strings aus Variablen/Aufrufen,
+//     Arrays, Maps und Objekte verlassen den JIT weiterhin über einen
+//     Deopt-Guard.
 //   - Der Goroutine-Stack wächst im JIT nicht: Stack-Slots werden nur
 //     beschrieben, wenn sie unterhalb der Eingangstiefe liegen (dann ist der
 //     Slot von der GC gescannt und die Zeiger gültig), oder vorher komplett
@@ -48,20 +53,46 @@ const (
 // mit diesen Zahlen. init() sichert sie ab, damit ein Refactor nicht still
 // falschen Code erzeugt.
 const (
-	offCtxStack  = unsafe.Offsetof(ctx{}.stack)
-	offCtxBase   = unsafe.Offsetof(ctx{}.base)
-	offCtxDepth  = unsafe.Offsetof(ctx{}.depth)
-	offCtxBudget = unsafe.Offsetof(ctx{}.budget)
-	offCtxVars   = unsafe.Offsetof(ctx{}.vars)
+	offCtxStack    = unsafe.Offsetof(ctx{}.stack)
+	offCtxBase     = unsafe.Offsetof(ctx{}.base)
+	offCtxDepth    = unsafe.Offsetof(ctx{}.depth)
+	offCtxBudget   = unsafe.Offsetof(ctx{}.budget)
+	offCtxVars     = unsafe.Offsetof(ctx{}.vars)
+	offCtxArena    = unsafe.Offsetof(ctx{}.arena)
+	offCtxArenaCap = unsafe.Offsetof(ctx{}.arenaCap)
+	offCtxArenaOff = unsafe.Offsetof(ctx{}.arenaOff)
 )
 
 // ctx ist der Maschinen-Kontext, den der generierte Code in Register lädt.
 type ctx struct {
-	stack  *[]value.Value // +0  Slice-Header der VM (data/len/cap)
-	base   int64          // +8  Byte-Offset base*slotSize (R13)
-	depth  int64          // +16 Byte-Offset des Stacks nach dem Zurückkehren
-	budget int64          // +24 Safepoint-Zähler (an Rückwärtssprüngen)
-	vars   *varSlot       // +32 Tabelle der aufgelösten Variablenzellen
+	stack    *[]value.Value // +0  Slice-Header der VM (data/len/cap)
+	base     int64          // +8  Byte-Offset base*slotSize (R13)
+	depth    int64          // +16 Byte-Offset des Stacks nach dem Zurückkehren
+	budget   int64          // +24 Safepoint-Zähler (an Rückwärtssprüngen)
+	vars     *varSlot       // +32 Tabelle der aufgelösten Variablenzellen
+	arena    *byte          // +40 String-Arena für natives CONCAT
+	arenaCap int64          // +48 Kapazität des Arenas in Bytes
+	arenaOff int64          // +56 belegte Bytes (monoton wachsend)
+}
+
+// arenaBytes ist die Größe des monotonen String-Arenas für natives CONCAT.
+// Der Speicher wird pro Programm einmal angelegt und nie verschoben oder
+// freigegeben; ist er voll, deoptet CONCAT dauerhaft in die VM, die dann
+// normale Go-Strings erzeugt (identische Semantik).
+const arenaBytes = 1 << 20
+
+// strArena hält die Bytes der nativ verketteten Strings. buf darf nicht
+// wachsen, damit die bereits in Slots/VM-Variablen gespeicherten String-
+// Zeiger gültig bleiben. Das Program hält das Arena für die gesamte
+// Laufzeit; deshalb bleiben die ohne Write-Barrier geschriebenen String-
+// Zeiger für die GC erreichbar (Go-GC ist non-moving).
+type strArena struct {
+	buf []byte
+	off int64
+}
+
+func newStrArena() *strArena {
+	return &strArena{buf: make([]byte, arenaBytes)}
 }
 
 // varSlot ist eine aufgelöste Variablenzelle. flags sagt dem Code, ob der
@@ -94,6 +125,7 @@ type Entry struct {
 	local  []bool           // true: nur aktueller Scope (For-Variablen)
 	slots  []varSlot        // Auflösungspuffer (Ein-Thread-Nutzung, s. Package-Doku)
 	budget int64            // Safepoint-Budget (aus Prepare)
+	arena  *strArena        // gemeinsames String-Arena (nur bei CONCAT)
 	fv     []uintptr        // Funcval: hält den Codezeiger am Leben
 	fn     func(*ctx) int32 // generierte Funktion (funcval-Trick, nur amd64)
 	code   []bytecode.Instr // nur zur Lebensdauer/Diagnose
@@ -155,7 +187,18 @@ func (e *Entry) Run(env Env, stk *[]value.Value) int32 {
 		budget: e.budget,
 		vars:   slotsPtr,
 	}
+	if e.arena != nil && len(e.arena.buf) > 0 {
+		c.arena = &e.arena.buf[0]
+		c.arenaCap = int64(len(e.arena.buf))
+		c.arenaOff = e.arena.off
+	}
 	ip := e.fn(&c)
+	if e.arena != nil {
+		// Der Code schreibt den Arena-Offset nach jedem nativen CONCAT
+		// zurück; so gehen bereits erzeugte Strings auch bei einem späteren
+		// Deopt nicht verloren.
+		e.arena.off = c.arenaOff
+	}
 
 	// Fensterende: exakte Tiefe zurückschreiben. Die Slot-Inhalte oberhalb
 	// sind entweder leer (Zeigerfelder NULL) oder gültig - daher ist das
@@ -165,7 +208,7 @@ func (e *Entry) Run(env Env, stk *[]value.Value) int32 {
 }
 
 func init() {
-	if unsafe.Sizeof(ctx{}) != 40 {
+	if unsafe.Sizeof(ctx{}) != 64 {
 		panic("jit: unerwartetes ctx-Layout")
 	}
 	if unsafe.Sizeof(varSlot{}) != 16 {
@@ -182,6 +225,7 @@ func init() {
 type Program struct {
 	tables       map[uintptr][]*Entry // pro Code-Array: ip -> Entry
 	mem          *execMem
+	arena        *strArena // monotones String-Arena (nur bei CONCAT)
 	budget       int64
 	Stats        Stats
 	cacheCode    []byte
@@ -233,6 +277,9 @@ func Prepare(c *bytecode.Chunk, budget int64) *Program {
 	p := &Program{
 		tables: make(map[uintptr][]*Entry),
 		budget: budget,
+	}
+	if chunkHasConcat(c) {
+		p.arena = newStrArena()
 	}
 	if err := compile(p, c); err != nil {
 		return nil
@@ -312,11 +359,11 @@ type SavedProgram struct {
 
 const cacheMagic = "VBXJ"
 
-// cacheVersion 4: Codegen-Runde 2/3 (natives OpEq/OpNeq, SSE4.1-Rundung).
-// Zusätzlich verweigert der Cache-Key über den Codegen-Fingerprint
-// (fingerprint.go) selbst die Gültigkeit; die Konstante bleibt als Format-
-// Abbruch für Änderungen, die der Kanarien-Region nicht sichtbar sind.
-const cacheVersion = 4
+// cacheVersion 5: Codegen-Runde mit nativem CONCAT und erweitertem ctx
+// (String-Arena). Zusätzlich verweigert der Cache-Key über den Codegen-
+// Fingerprint (fingerprint.go) selbst die Gültigkeit; die Konstante bleibt als
+// Format-Abbruch für Änderungen, die der Kanarien-Region nicht sichtbar sind.
+const cacheVersion = 5
 
 func readCache(c *bytecode.Chunk, path string, key [32]byte, budget int64) (*Program, error) {
 	f, err := os.Open(path)
@@ -359,6 +406,9 @@ func install(c *bytecode.Chunk, sp SavedProgram, budget int64) (*Program, error)
 	}
 	p := &Program{tables: make(map[uintptr][]*Entry), mem: mem, budget: budget, Stats: sp.Stats,
 		cacheCode: sp.Code, cacheEntries: sp.Entries}
+	if chunkHasConcat(c) {
+		p.arena = newStrArena()
+	}
 	for _, ca := range arrays {
 		if len(ca) > 0 {
 			p.tables[uintptr(unsafe.Pointer(&ca[0]))] = make([]*Entry, len(ca))
@@ -369,7 +419,7 @@ func install(c *bytecode.Chunk, sp SavedProgram, budget int64) (*Program, error)
 		key := uintptr(unsafe.Pointer(&ca[0]))
 		e := &Entry{ip: ce.IP, dEntry: ce.DEntry, maxRel: ce.MaxRel,
 			names: ce.Names, local: ce.Local, slots: make([]varSlot, len(ce.Names)),
-			budget: budget, code: ca}
+			budget: budget, arena: p.arena, code: ca}
 		fv := []uintptr{mem.ptr + uintptr(ce.StubOffset)}
 		e.fv = fv
 		e.fn = *(*func(*ctx) int32)(unsafe.Pointer(&fv))
@@ -436,4 +486,17 @@ func codeArrays(c *bytecode.Chunk) [][]bytecode.Instr {
 		}
 	}
 	return arrays
+}
+
+// chunkHasConcat sagt, ob der Chunk überhaupt OpConcat enthält. Nur dann
+// wird das String-Arena angelegt (Speicher pro Programm).
+func chunkHasConcat(c *bytecode.Chunk) bool {
+	for _, ca := range codeArrays(c) {
+		for i := range ca {
+			if ca[i].Op == bytecode.OpConcat {
+				return true
+			}
+		}
+	}
+	return false
 }
