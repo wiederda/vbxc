@@ -12,28 +12,28 @@ func initRegistryFunctions() {
 
 	ns := "reg."
 
-	Register(ns+"Read", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"Read", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
 
-	Register(ns+"Write", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"Write", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
 
-	Register(ns+"Exists", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"Exists", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
 
-	Register(ns+"Delete", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"Delete", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
-	Register(ns+"WriteProtectedValue", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"WriteProtectedValue", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
-	Register(ns+"ReadProtectedValue", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"ReadProtectedValue", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
-	Register(ns+"ReadProtectedValueBytes", "", "", "", func(args []valpkg.Value) valpkg.Value {
+	Register(ns+"ReadProtectedValueBytes", "reg", "", "", func(args []valpkg.Value) valpkg.Value {
 		return valpkg.StrVal("error: registry not available on this OS")
 	})
 }

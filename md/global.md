@@ -844,12 +844,13 @@ End If
 
 ## LoadModule(name)
 - **Konkret:**
-  Lädt ein optionales Modul (nativ oder als WASM-Plugin) zur Laufzeit, unabhängig von `#use`.
-  War das Modul bereits geladen, wird sofort `True` zurückgegeben, ohne erneut zu laden.
+  Prüft, ob ein eingebautes Modul in der Runtime registriert ist. Optionale
+  Module werden dadurch nicht für das Skript freigeschaltet; dafür ist `#use`
+  vorgesehen.
 - **Parameter:**
-  - `name`: Modulname (z. B. `"zip"`, `"pgp"`, `"yaml"`).
+  - `name`: Modulname.
 - **Rückgabe:**
-  `BoolVal` bei Erfolg, sonst `ErrorVal` (prüfbar mit `IsError`/`ErrorText`).
+  `BoolVal` bei registriertem Modul, sonst `ErrorVal`.
 
 ---
 

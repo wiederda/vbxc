@@ -172,10 +172,11 @@ viele Datenoperationen und andere nicht unterstützte Bereiche laufen weiter in 
 
 # Modul-System
 
-Eingebaute Namespaces sind ohne `#use` verfügbar. `#use` lädt zusätzliche
-Namespaces als WASM-Plugins. Die Dateien `plugins/<namespace>.wasm` werden
-neben der ausführbaren Datei gesucht; `VBX_PLUGIN_PATH` kann das Plugin-
-Verzeichnis setzen.
+Die Standardmodule `global`, `math`, `app`, `array`, `date`, `file` und
+`folder` sind immer verfügbar. Optionale eingebaute Module und Plugins werden
+mit `#use` eingebunden. Für Plugins werden die Dateien
+`plugins/<namespace>.wasm` neben der ausführbaren Datei gesucht;
+`VBX_PLUGIN_PATH` kann das Plugin-Verzeichnis setzen.
 
 Im Skript:
 
@@ -183,8 +184,9 @@ Im Skript:
 #use json,net,hash
 ```
 
-Die `#use`-Namen werden in der `.vbb`-Datei vermerkt. Das jeweilige Plugin muss
-zur Laufzeit dennoch vorhanden sein.
+Die `#use`-Namen werden in der `.vbb`-Datei vermerkt. Eingebaute optionale
+Module werden dadurch im Skript freigeschaltet; ein Plugin muss zur Laufzeit
+weiterhin vorhanden sein.
 
 Modul-Hilfe:
 

@@ -1,10 +1,8 @@
 package evaluator
 
 // Ausführungspipeline für "vbxc <datei.vb>": 1:1 nachgebaut aus
-// runfile.go des Interpreters. Der Unterschied zu vbx: kein .vbc/
-// Entschlüsseln (in vbxc sind alle Builtins über init() registriert) und
-// es wird nirgends etwas auf die Festplatte geschrieben. "#use" eines
-// unbekannten Namens lädt ein WASM-Plugin (Paket plugin).
+// runfile.go des Interpreters. "#use" schaltet optionale Builtins frei und
+// lädt bei unbekannten Namespaces ein WASM-Plugin (Paket plugin).
 
 import (
 	"bytes"
@@ -118,6 +116,13 @@ func runParsedInternal(data []byte, label, baseDir, version string) (finalVal Va
 	// geladene Plugins überspringt plugin.Load selbst.
 	if err := plugin.LoadModules(useModules); err != nil {
 		return Value{}, err
+	}
+	env.modules = make(map[string]bool, len(useModules))
+	for _, module := range useModules {
+		module = strings.ToLower(strings.TrimSpace(module))
+		if module != "" {
+			env.modules[module] = true
+		}
 	}
 
 	registerFuncsAndSubs(stmts)

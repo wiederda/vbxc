@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strings"
 
 	"vbxc/bytecode"
 	"vbxc/jit"
@@ -50,6 +51,7 @@ type VM struct {
 	depth   int                       // aktuelle Aufruftiefe
 	callPos bytecode.Pos              // Position des letzten OpCall (für Meldungen)
 	callIn  *bytecode.Chunk
+	modules map[string]bool
 }
 
 // Maximale Verschachtelung von Function/Sub-Aufrufen. Anders als im
@@ -116,6 +118,15 @@ func (vm *VM) Run(c *bytecode.Chunk) (err error) {
 	// lädt nichts, wenn keine Module hinterlegt sind.
 	if err := plugin.LoadModules(c.Modules); err != nil {
 		return err
+	}
+	vm.modules = make(map[string]bool, len(c.Modules))
+	for _, group := range c.Modules {
+		for _, module := range strings.Split(group, ",") {
+			module = strings.ToLower(strings.TrimSpace(module))
+			if module != "" {
+				vm.modules[module] = true
+			}
+		}
 	}
 
 	vm.stack = vm.stack[:0]
@@ -693,7 +704,7 @@ func (vm *VM) loadVar(env *Environment, name string) value.Value {
 func (vm *VM) loadField(env *Environment, obj, field string) value.Value {
 	objVal, found := env.Get(obj)
 	if !found {
-		if _, ok := stdlib.FindByModuleAndName(obj, field); ok {
+		if info, ok := stdlib.FindByModuleAndName(obj, field); ok && stdlib.Enabled(info, vm.modules) {
 			return value.ErrorVal(fmt.Sprintf("Funktion '%s.%s' muss mit '()' aufgerufen werden", obj, field))
 		}
 		return value.ErrorVal(fmt.Sprintf("Objekt '%s' ist nicht definiert", obj))
@@ -720,7 +731,7 @@ func (vm *VM) call(c *bytecode.Chunk, env *Environment, name string, args []valu
 		}
 	}
 
-	if info, ok := stdlib.Lookup(name); ok {
+	if info, ok := stdlib.Lookup(name); ok && stdlib.Enabled(info, vm.modules) {
 		if info.Deprecated != "" && !vm.deprecated[name] {
 			vm.deprecated[name] = true
 			fmt.Fprintf(os.Stderr, "\033[33m[WARNUNG]\033[0m '%s' ist veraltet - benutze stattdessen %s\n", name, info.Deprecated)

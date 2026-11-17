@@ -92,3 +92,18 @@ func FindByModuleAndName(module, name string) (BuiltinInfo, bool) {
 	}
 	return BuiltinInfo{}, false
 }
+
+// IsStandardModule reports whether a namespace is available without #use.
+func IsStandardModule(module string) bool {
+	switch strings.ToLower(strings.TrimSpace(module)) {
+	case "global", "math", "app", "array", "date", "file", "folder":
+		return true
+	default:
+		return false
+	}
+}
+
+// Enabled reports whether a registered builtin is visible to a script.
+func Enabled(info BuiltinInfo, modules map[string]bool) bool {
+	return IsStandardModule(info.Module) || modules[strings.ToLower(info.Module)]
+}

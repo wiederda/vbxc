@@ -97,8 +97,8 @@ func PluginPath(ns string) (string, error) {
 
 // LoadModules lädt eine "#use"-Modulliste (z. B. Chunk.Modules eines
 // Bytecode-Chunks oder die "#use"-Zeilen eines direkt interpretierten
-// Skripts). Eingebaute Namespaces werden übersprungen (Alle Builtins in
-// vbxc sind statisch über init() registriert); unbekannte Namen müssen
+// Skripts). Eingebaute Namespaces werden übersprungen (Builtins sind statisch
+// registriert; optionale Builtins werden durch die Laufzeit freigeschaltet); unbekannte Namen müssen
 // als WASM-Plugin verfügbar sein. Doppelte Namen werden dedupliziert,
 // jede Fehlermeldung nennt das betreffende Modul.
 func LoadModules(names []string) error {

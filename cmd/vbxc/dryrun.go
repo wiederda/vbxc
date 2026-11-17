@@ -47,7 +47,7 @@ func dryRun(path string) (int, error) {
 	if _, err := compiler.Compile(filepath.Base(path), stmts); err != nil {
 		return 0, err
 	}
-	warnings := checkUnknownCalls(stmts)
+	warnings := checkUnknownCalls(stmts, modules)
 	for _, w := range warnings {
 		msg := fmt.Sprintf("[WARNUNG] (%s) Unbekannter Aufruf: '%s'", w.context, w.name)
 		if w.suggestion != "" {
@@ -58,9 +58,16 @@ func dryRun(path string) (int, error) {
 	return len(warnings), nil
 }
 
-func checkUnknownCalls(stmts []ast.Stmt) []callWarning {
+func checkUnknownCalls(stmts []ast.Stmt, modules []string) []callWarning {
 	known := make(map[string]bool)
-	for name := range stdlib.Builtins() {
+	active := make(map[string]bool, len(modules))
+	for _, module := range modules {
+		active[strings.ToLower(strings.TrimSpace(module))] = true
+	}
+	for name, info := range stdlib.Builtins() {
+		if !stdlib.Enabled(info, active) {
+			continue
+		}
 		known[strings.ToLower(name)] = true
 	}
 	topVars := make(map[string]bool)

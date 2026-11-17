@@ -44,6 +44,7 @@ type Environment struct {
 	currentFile     string
 	currentFuncName string
 	fnReturn        Value
+	modules         map[string]bool
 
 	varVersion uint64
 }
@@ -191,6 +192,13 @@ func findBuiltinByModuleAndName(module, name string) (BuiltinInfo, bool) {
 	}
 
 	return BuiltinInfo{}, false
+}
+
+func enabledBuiltin(info BuiltinInfo, env *Environment) bool {
+	if env == nil {
+		return stdlib.IsStandardModule(info.Module)
+	}
+	return stdlib.Enabled(info, env.root().modules)
 }
 
 func (e *Environment) Get(name string) (Value, bool) {
@@ -490,7 +498,7 @@ func evalFunctionCall(name string, args []Expr, env *Environment) Value {
 	}
 
 	// 3. Builtins
-	if info, ok := currentBuiltins()[name]; ok {
+	if info, ok := currentBuiltins()[name]; ok && enabledBuiltin(info, env) {
 		// Deprecation-Warnung: einmalig pro Funktionsname und Prozesslauf,
 		// unabhängig davon, ob -dryrun jemals aufgerufen wird -- die
 		// Warnung ist an den ECHTEN Aufruf gekoppelt, nicht an ein
@@ -584,8 +592,8 @@ func evalFunctionCall(name string, args []Expr, env *Environment) Value {
 var subs = make(map[string]*SubNode)
 var funcs = make(map[string]*FuncNode)
 
-// BuiltinInfo und die Registry kommen aus dem stdlib-Paket (die ~500
-// Funktionen sind dort über init() vorregistriert, "#use" ist nur Metadaten).
+// BuiltinInfo und die Registry kommen aus dem stdlib-Paket. Die Registry
+// enthält alle Funktionen; enabledBuiltin beschränkt optionale Module je Skript.
 type BuiltinInfo = stdlib.BuiltinInfo
 
 // Verhindert Warnungs-Spam: pro Funktionsname nur einmal pro Prozesslauf.
@@ -1832,7 +1840,7 @@ func evalExpr(e Expr, env *Environment) Value {
 			objVal, found := env.Get(c.objName)
 
 			if !found {
-				if _, ok := findBuiltinByModuleAndName(c.objName, c.fieldName); ok {
+				if info, ok := findBuiltinByModuleAndName(c.objName, c.fieldName); ok && enabledBuiltin(info, env) {
 					return ErrorVal(fmt.Sprintf(
 						"Funktion '%s.%s' muss mit '()' aufgerufen werden",
 						c.objName,
